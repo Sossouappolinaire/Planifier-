@@ -14,6 +14,7 @@ import android.text.InputType;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.ProgressBar;
 import android.animation.ValueAnimator;
@@ -55,6 +56,7 @@ public class MainActivity extends Activity {
     RadioButton rbInterval, rbFixed;
     LinearLayout groupsBox, intervalBox, fixedBox, list;
     final Set<String> selected = new LinkedHashSet<>();
+    final Set<String> cand = new LinkedHashSet<>(); // noms cochés dans les résultats de recherche
     final Calendar cal = Calendar.getInstance();
     final SimpleDateFormat fDate = new SimpleDateFormat("EEE dd/MM/yyyy", Locale.FRANCE);
     final SimpleDateFormat fTime = new SimpleDateFormat("HH:mm", Locale.FRANCE);
@@ -261,7 +263,7 @@ public class MainActivity extends Activity {
         if (num.isEmpty()) { toast("Saisis ton numéro WhatsApp (avec indicatif, ex : 22901234567)."); return; }
         prefs().edit().putString("phone", num).apply();
         StringBuilder sb = new StringBuilder("*Planning Sossou Constant* — récapitulatif\n\n");
-        List<String> g = Store.loadGroups(this);
+        List<String> g = Store.loadConfirmed(this);
         sb.append("Groupes trouvés (").append(g.size()).append(") : ").append(g.isEmpty() ? "aucun" : join(g)).append("\n\n");
         int i = 1;
         for (Store.Plan p : Store.load(this)) {
@@ -347,14 +349,18 @@ public class MainActivity extends Activity {
         cal.set(Calendar.MILLISECOND, 0);
 
         root = new LinearLayout(this);
-        root.setBackgroundColor(BG);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(16), dp(8), dp(16), dp(32));
         ScrollView sv = new ScrollView(this);
-        sv.setBackgroundColor(BG);
+        sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
         sv.addView(root);
         setContentView(sv);
-        getWindow().setStatusBarColor(BG);
+        // Fond fixe : dégradé vert sombre (reste en place quand on fait défiler, aucun flash blanc)
+        GradientDrawable fond = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.parseColor("#0A1A13"), Color.parseColor("#0F2B21"), Color.parseColor("#08130E")});
+        getWindow().setBackgroundDrawable(fond);
+        getWindow().setStatusBarColor(Color.parseColor("#0A1A13"));
+        getWindow().setNavigationBarColor(Color.parseColor("#08130E"));
         TextView logo = new TextView(this);
         logo.setText("Planning\nSossou Constant");
         logo.setTextSize(30);
@@ -428,6 +434,7 @@ public class MainActivity extends Activity {
                 Store.setWaPkg(this, id == rw2.getId() ? "com.whatsapp.w4b" : "com.whatsapp");
                 selected.clear();
                 refreshGroups();
+                cand.clear();
                 toast("WhatsApp changé : relance la recherche de tes groupes.");
             });
             add(rgw);
@@ -611,34 +618,101 @@ public class MainActivity extends Activity {
         scanStatus.setText(Store.scanStatus(this));
     }
 
+    TextView sousTitre(String t) {
+        TextView v = new TextView(this);
+        v.setText(t);
+        v.setTextColor(GOLD);
+        v.setTypeface(Typeface.DEFAULT_BOLD);
+        v.setPadding(0, dp(10), 0, dp(4));
+        return v;
+    }
+
     void refreshGroups() {
         groupsBox.removeAllViews();
         String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
-        List<String> all = Store.loadGroups(this);
-        if (all.isEmpty()) {
+        List<String> mine = Store.loadConfirmed(this);
+        List<String> found = Store.loadScanned(this);
+        found.removeAll(mine);
+        selected.retainAll(mine);
+        cand.retainAll(found);
+
+        // --- Résultats de la recherche : groupes et contacts mélangés ---
+        if (!found.isEmpty()) {
+            groupsBox.addView(sousTitre("Résultats de la recherche (" + found.size() + ")"));
+            TextView aide = new TextView(this);
+            aide.setTextColor(MUTED);
+            aide.setText("Coche UNIQUEMENT les groupes (pas les contacts), puis valide. "
+                    + "Tout ce qui n'est pas coché sera supprimé de la liste.");
+            groupsBox.addView(aide);
+            for (final String g : found) {
+                if (!f.isEmpty() && !g.toLowerCase(Locale.ROOT).contains(f)) continue;
+                CheckBox cb = new CheckBox(this);
+                cb.setText(g);
+                cb.setChecked(cand.contains(g));
+                cb.setTextColor(TXT);
+                cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+                cb.setOnCheckedChangeListener((v, on) -> {
+                    if (on) cand.add(g); else cand.remove(g);
+                });
+                groupsBox.addView(cb);
+            }
+            groupsBox.addView(btn("✔ Valider les groupes cochés", v -> validerGroupes()));
+        }
+
+        // --- Mes groupes : seuls ceux-là servent à envoyer ---
+        groupsBox.addView(sousTitre("Mes groupes (" + mine.size() + ")"));
+        if (mine.isEmpty()) {
             TextView t = new TextView(this);
             t.setTextColor(MUTED);
-            t.setText("Aucun groupe pour l'instant : appuie sur « Rechercher mes groupes WhatsApp ».");
+            t.setText("Aucun groupe validé : lance la recherche, coche tes groupes puis valide.");
             groupsBox.addView(t);
         }
-        for (final String g : all) {
+        for (final String g : mine) {
             if (!f.isEmpty() && !g.toLowerCase(Locale.ROOT).contains(f)) continue;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
             CheckBox cb = new CheckBox(this);
             cb.setText(g);
             cb.setChecked(selected.contains(g));
             cb.setTextColor(TXT);
             cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
-            cb.setAlpha(0f);
-            cb.animate().alpha(1f).setDuration(300).setStartDelay(groupsBox.getChildCount() * 40L).start();
             cb.setOnCheckedChangeListener((v, on) -> {
                 if (on) selected.add(g); else selected.remove(g);
-                selCount.setText(selected.size() + " groupe(s) sélectionné(s)");
+                selCount.setText(selected.size() + " groupe(s) sélectionné(s) pour l'envoi");
                 refreshDashboard();
             });
-            groupsBox.addView(cb);
+            row.addView(cb, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView x = new TextView(this);
+            x.setText("✕");
+            x.setTextColor(RED);
+            x.setTextSize(18);
+            x.setPadding(dp(14), dp(8), dp(14), dp(8));
+            x.setOnClickListener(v -> {
+                Store.removeConfirmed(this, g);
+                selected.remove(g);
+                refreshGroups();
+            });
+            row.addView(x);
+            groupsBox.addView(row);
         }
-        selCount.setText(selected.size() + " groupe(s) sélectionné(s)");
+        selCount.setText(selected.size() + " groupe(s) sélectionné(s) pour l'envoi");
         refreshDashboard();
+    }
+
+    /** Garde uniquement les noms cochés comme groupes ; le reste de la recherche est effacé. */
+    void validerGroupes() {
+        if (cand.isEmpty()) {
+            toast("Coche d'abord les groupes dans les résultats.");
+            return;
+        }
+        List<String> ok = new ArrayList<>(cand);
+        Store.addConfirmed(this, ok);
+        Store.clearScanned(this);
+        selected.addAll(ok);
+        cand.clear();
+        toast(ok.size() + " groupe(s) validé(s).");
+        refreshGroups();
     }
 
     void lancerRecherche() {

@@ -2,8 +2,8 @@
 
 1. Installer l'APK (GitHub > Actions > Build APK > Artifacts).
 2. Autoriser l'accès à WhatsApp (accessibilité), les alarmes exactes et la batterie.
-3. « Rechercher mes groupes WhatsApp » : l'appli lit la liste et la montre dans l'écran.
-4. Cocher un ou plusieurs groupes.
+3. « Rechercher mes groupes WhatsApp » : l'appli lit la liste (groupes et contacts mélangés).
+4. Dans les résultats, cocher UNIQUEMENT les groupes puis « Valider » : ils passent dans « Mes groupes », le reste est effacé. Cocher ensuite dans « Mes groupes » ceux qui reçoivent l'envoi.
 5. Choisir : intervalle régulier (nombre d'envois + minutes) OU heures fixes (+ nombre de jours).
 6. Écrire le message (court ou long), puis « Planifier ».
 

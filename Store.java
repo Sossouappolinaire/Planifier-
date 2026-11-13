@@ -15,6 +15,7 @@ public class Store {
     static final String KEY = "liste";
     static final String K_SCANNED = "groupes_trouves";
     static final String K_MANUAL = "groupes_manuels";
+    static final String K_CONFIRMED = "groupes_confirmes";
     static final String K_STATUS = "scan_status";
     static final String K_PKG = "wa_pkg";
 
@@ -192,9 +193,48 @@ public class Store {
     }
 
     public static synchronized void addManual(Context c, String name) {
-        List<String> l = readList(c, K_MANUAL + sfx(c));
+        List<String> l = readList(c, K_CONFIRMED + sfx(c));
         addUnique(l, name);
-        writeList(c, K_MANUAL + sfx(c), l);
+        writeList(c, K_CONFIRMED + sfx(c), l);
+    }
+
+
+    // ---------- Groupes confirmés par l'utilisateur ----------
+
+    /** Noms lus dans WhatsApp (groupes ET contacts mélangés) : à trier par l'utilisateur. */
+    public static synchronized List<String> loadScanned(Context c) {
+        List<String> l = readList(c, K_SCANNED + sfx(c));
+        Collections.sort(l, String.CASE_INSENSITIVE_ORDER);
+        return l;
+    }
+
+    public static synchronized void clearScanned(Context c) {
+        writeList(c, K_SCANNED + sfx(c), new ArrayList<String>());
+    }
+
+    /** Seuls les groupes cochés puis validés par l'utilisateur (+ ajouts à la main). */
+    public static synchronized List<String> loadConfirmed(Context c) {
+        List<String> all = new ArrayList<>();
+        for (String s : readList(c, K_CONFIRMED + sfx(c))) addUnique(all, s);
+        for (String s : readList(c, K_MANUAL + sfx(c))) addUnique(all, s);
+        Collections.sort(all, String.CASE_INSENSITIVE_ORDER);
+        return all;
+    }
+
+    public static synchronized void addConfirmed(Context c, List<String> names) {
+        List<String> l = readList(c, K_CONFIRMED + sfx(c));
+        for (String n : names) addUnique(l, n);
+        writeList(c, K_CONFIRMED + sfx(c), l);
+    }
+
+    public static synchronized void removeConfirmed(Context c, String name) {
+        for (String key : new String[]{K_CONFIRMED + sfx(c), K_MANUAL + sfx(c)}) {
+            List<String> l = readList(c, key);
+            for (int i = l.size() - 1; i >= 0; i--) {
+                if (l.get(i).equalsIgnoreCase(name)) l.remove(i);
+            }
+            writeList(c, key, l);
+        }
     }
 
     public static String scanStatus(Context c) {

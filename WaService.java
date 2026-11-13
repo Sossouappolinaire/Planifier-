@@ -53,6 +53,8 @@ public class WaService extends AccessibilityService {
     boolean sectionFresh, groupHeaderSeen;
     int noNew, scrolls;
     long scanStart;
+    int budget; // nombre maximum de nœuds lus par analyse
+    static final int MAX_NODES = 700;
 
     final Runnable poll = new Runnable() {
         @Override
@@ -66,7 +68,7 @@ public class WaService extends AccessibilityService {
                 return;
             }
             tick();
-            h.postDelayed(this, 900);
+            h.postDelayed(this, 700);
         }
     };
 
@@ -102,7 +104,8 @@ public class WaService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (cur != null) tick();
+        // Volontairement vide : le minuteur (poll / scanPoll) pilote tout.
+        // Analyser l'écran de WhatsApp à chaque événement figeait le téléphone.
     }
 
     @SuppressWarnings("deprecation")
@@ -189,6 +192,7 @@ public class WaService extends AccessibilityService {
 
     void scanTick() {
         long now = System.currentTimeMillis();
+        budget = MAX_NODES;
         AccessibilityNodeInfo root = getRootInActiveWindow();
         boolean inWa = root != null && root.getPackageName() != null
                 && isWa(root.getPackageName().toString());
@@ -220,7 +224,7 @@ public class WaService extends AccessibilityService {
     }
 
     void walk(AccessibilityNodeInfo n) {
-        if (n == null) return;
+        if (n == null || budget-- <= 0) return;
         String id = n.getViewIdResourceName();
         CharSequence tx = n.getText();
         if (tx != null && tx.length() > 0) {
@@ -247,7 +251,7 @@ public class WaService extends AccessibilityService {
     }
 
     AccessibilityNodeInfo findScrollable(AccessibilityNodeInfo n) {
-        if (n == null) return null;
+        if (n == null || budget-- <= 0) return null;
         if (n.isScrollable()) return n;
         for (int i = 0; i < n.getChildCount(); i++) {
             AccessibilityNodeInfo r = findScrollable(n.getChild(i));
@@ -266,17 +270,9 @@ public class WaService extends AccessibilityService {
             status = "✘ " + hour + " — " + (reason != null ? reason
                     : "impossible de lire la liste (tu peux ajouter les groupes à la main)");
         } else {
-            for (Map.Entry<String, Boolean> e : found.entrySet()) {
-                if (e.getValue()) groups.add(e.getKey());
-            }
-            if (groups.isEmpty()) {
-                // Rubrique « Groupes » non reconnue : on garde tous les noms lus
-                groups.addAll(found.keySet());
-                status = "⚠ " + hour + " — " + groups.size()
-                        + " noms trouvés (groupes et contacts mélangés)";
-            } else {
-                status = "✔ " + hour + " — " + groups.size() + " groupes trouvés";
-            }
+            groups.addAll(found.keySet());
+            status = "✔ " + hour + " — " + groups.size()
+                    + " noms trouvés (groupes et contacts) : coche uniquement les groupes";
             Collections.sort(groups, String.CASE_INSENSITIVE_ORDER);
             Store.saveScanned(this, groups);
         }
@@ -306,7 +302,7 @@ public class WaService extends AccessibilityService {
     }
 
     void next() {
-        if (scanning) return;
+        if (scanning || cur != null) return;
         cur = queue.poll();
         if (cur == null) {
             if (wl != null && wl.isHeld()) wl.release();
@@ -353,6 +349,7 @@ public class WaService extends AccessibilityService {
         if (now - lastTick < 400) return;
         lastTick = now;
 
+        budget = MAX_NODES;
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null || root.getPackageName() == null) return;
         String pkg = root.getPackageName().toString();
@@ -422,7 +419,7 @@ public class WaService extends AccessibilityService {
     }
 
     AccessibilityNodeInfo findText(AccessibilityNodeInfo n, String t, boolean exact) {
-        if (n == null) return null;
+        if (n == null || budget-- <= 0) return null;
         CharSequence cs = n.getText();
         if (cs != null && !isEdit(n)) {
             String s = cs.toString().trim();
@@ -438,7 +435,7 @@ public class WaService extends AccessibilityService {
     }
 
     AccessibilityNodeInfo findEdit(AccessibilityNodeInfo n) {
-        if (n == null) return null;
+        if (n == null || budget-- <= 0) return null;
         if (isEdit(n)) return n;
         for (int i = 0; i < n.getChildCount(); i++) {
             AccessibilityNodeInfo r = findEdit(n.getChild(i));
@@ -454,7 +451,7 @@ public class WaService extends AccessibilityService {
     }
 
     AccessibilityNodeInfo scanDesc(AccessibilityNodeInfo n, String[] words) {
-        if (n == null) return null;
+        if (n == null || budget-- <= 0) return null;
         if (inList(n.getContentDescription(), words)) return n;
         for (int i = 0; i < n.getChildCount(); i++) {
             AccessibilityNodeInfo r = scanDesc(n.getChild(i), words);
@@ -472,7 +469,7 @@ public class WaService extends AccessibilityService {
     }
 
     AccessibilityNodeInfo scanSend(AccessibilityNodeInfo n) {
-        if (n == null) return null;
+        if (n == null || budget-- <= 0) return null;
         if (inList(n.getContentDescription(), SEND)) return n;
         CharSequence cls = n.getClassName();
         if (inList(n.getText(), SEND) && cls != null && cls.toString().contains("Button")) return n;
