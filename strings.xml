@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="service_desc">Permet à Planning Sossou Constant d\'ouvrir WhatsApp à l\'heure prévue, de choisir le groupe et d\'appuyer sur Envoyer.</string>
+</resources>

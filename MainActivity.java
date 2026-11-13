@@ -1,0 +1,708 @@
+package bj.planificateur;
+
+import android.app.Activity;
+import android.app.DatePickerDialog;
+import android.app.TimePickerDialog;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextWatcher;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.Button;
+import android.widget.ProgressBar;
+import android.animation.ValueAnimator;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+public class MainActivity extends Activity {
+
+    TextView status, scanStatus, selCount;
+    EditText filter, manual, message, etCount, etInterval, etHours, etDays;
+    Button btnDate, btnTime;
+    RadioButton rbInterval, rbFixed;
+    LinearLayout groupsBox, intervalBox, fixedBox, list;
+    final Set<String> selected = new LinkedHashSet<>();
+    final Calendar cal = Calendar.getInstance();
+    final SimpleDateFormat fDate = new SimpleDateFormat("EEE dd/MM/yyyy", Locale.FRANCE);
+    final SimpleDateFormat fTime = new SimpleDateFormat("HH:mm", Locale.FRANCE);
+    final SimpleDateFormat fFull = new SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE);
+
+    int dp(int v) {
+        return (int) (v * getResources().getDisplayMetrics().density);
+    }
+
+    static final int BG = Color.parseColor("#0E1F17"), CARD = Color.parseColor("#16302A"),
+            GREEN = Color.parseColor("#25D366"), GREEN2 = Color.parseColor("#128C7E"),
+            TXT = Color.parseColor("#EAF7EF"), MUTED = Color.parseColor("#9DB8AA"), GOLD = Color.parseColor("#F5C451");
+    LinearLayout root, cur;
+    int sectionNo = 0;
+    EditText phone;
+    ProgressBar scanBar, planBar;
+    TextView planPct, scanPct;
+    final Handler ui = new Handler(Looper.getMainLooper());
+    String lastScanStatus = "";
+
+    GradientDrawable round(int color, int r) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(dp(r));
+        return g;
+    }
+
+    void add(View v) { cur.addView(v); }
+
+    /** Crée une section repliable (carte) avec une animation d'ouverture. */
+    TextView title(String t) {
+        sectionNo++;
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(round(CARD, 18));
+        card.setPadding(dp(14), dp(6), dp(14), dp(12));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(14);
+        card.setLayoutParams(lp);
+        TextView tv = new TextView(this);
+        tv.setText("▾  " + t);
+        tv.setTextSize(17);
+        tv.setTextColor(GREEN);
+        tv.setTypeface(Typeface.DEFAULT_BOLD);
+        tv.setPadding(0, dp(10), 0, dp(10));
+        final LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        tv.setOnClickListener(v -> {
+            boolean open = body.getVisibility() == View.VISIBLE;
+            if (open) {
+                body.animate().alpha(0f).translationY(-dp(10)).setDuration(220)
+                        .withEndAction(() -> body.setVisibility(View.GONE)).start();
+                tv.setText("▸  " + t);
+            } else {
+                body.setVisibility(View.VISIBLE);
+                body.setAlpha(0f);
+                body.setTranslationY(-dp(10));
+                body.animate().alpha(1f).translationY(0).setDuration(300).start();
+                tv.setText("▾  " + t);
+            }
+        });
+        card.addView(tv);
+        card.addView(body);
+        root.addView(card);
+        card.setAlpha(0f);
+        card.setTranslationY(dp(30));
+        card.animate().alpha(1f).translationY(0).setStartDelay(sectionNo * 90L).setDuration(450).start();
+        cur = body;
+        return tv;
+    }
+
+    Button btn(String t, View.OnClickListener l) {
+        Button b = new Button(this);
+        b.setText(t);
+        b.setAllCaps(false);
+        b.setTextColor(Color.parseColor("#06291A"));
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{GREEN, GREEN2});
+        g.setCornerRadius(dp(14));
+        b.setBackground(g);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(50));
+        lp.topMargin = dp(8);
+        b.setLayoutParams(lp);
+        b.setOnClickListener(v -> v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(90)
+                .withEndAction(() -> {
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(140).start();
+                    l.onClick(v);
+                }).start());
+        return b;
+    }
+
+    EditText styled(EditText e) {
+        e.setTextColor(TXT);
+        e.setHintTextColor(MUTED);
+        e.setBackground(round(BG, 12));
+        e.setPadding(dp(12), dp(10), dp(12), dp(10));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(8);
+        e.setLayoutParams(lp);
+        return e;
+    }
+
+    TextView txt(TextView t) { t.setTextColor(MUTED); return t; }
+
+    ProgressBar bar() {
+        ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        pb.setMax(100);
+        pb.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        pb.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(BG));
+        pb.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(10)));
+        pb.setVisibility(View.GONE);
+        return pb;
+    }
+
+    TextView pct() {
+        TextView t = new TextView(this);
+        t.setTextColor(GOLD);
+        t.setTextSize(13);
+        t.setVisibility(View.GONE);
+        return t;
+    }
+
+    /** Anime une barre de 0 à 100 %, puis lance l'action. */
+    void progress(ProgressBar pb, TextView label, String what, Runnable end) {
+        pb.setVisibility(View.VISIBLE);
+        label.setVisibility(View.VISIBLE);
+        ValueAnimator a = ValueAnimator.ofInt(0, 100);
+        a.setDuration(1400);
+        a.addUpdateListener(an -> {
+            int v = (int) an.getAnimatedValue();
+            pb.setProgress(v);
+            label.setText(what + " " + v + " %");
+        });
+        a.addListener(new android.animation.AnimatorListenerAdapter() {
+            public void onAnimationEnd(android.animation.Animator x) {
+                label.setText("✔ Terminé");
+                ui.postDelayed(() -> { pb.setVisibility(View.GONE); label.setVisibility(View.GONE); }, 1200);
+                end.run();
+            }
+        });
+        a.start();
+    }
+
+    SharedPreferences prefs() { return getSharedPreferences("reglages", MODE_PRIVATE); }
+
+    /** Ouvre WhatsApp vers le numéro de l'utilisateur avec la liste trouvée et planifiée. */
+    void envoyerRecap() {
+        String num = phone.getText().toString().replaceAll("\\D", "");
+        if (num.isEmpty()) { toast("Saisis ton numéro WhatsApp (avec indicatif, ex : 22901234567)."); return; }
+        prefs().edit().putString("phone", num).apply();
+        StringBuilder sb = new StringBuilder("*Planning Sossou Constant* — récapitulatif\n\n");
+        List<String> g = Store.loadGroups(this);
+        sb.append("Groupes trouvés (").append(g.size()).append(") : ").append(g.isEmpty() ? "aucun" : join(g)).append("\n\n");
+        int i = 1;
+        for (Store.Plan p : Store.load(this)) {
+            sb.append("*Planification ").append(i++).append("*").append(p.done ? " (terminée)" : "").append("\n");
+            sb.append("Groupes : ").append(join(p.groups)).append("\n");
+            sb.append("Message : ").append(p.message).append("\n");
+            sb.append("Horaires : ");
+            for (int k = 0; k < p.times.size(); k++) {
+                if (k > 0) sb.append(" | ");
+                sb.append(fFull.format(new Date(p.times.get(k))));
+            }
+            sb.append("\n\n");
+        }
+        if (i == 1) sb.append("Aucune planification pour l'instant.");
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://wa.me/" + num + "?text=" + Uri.encode(sb.toString()))));
+        } catch (Exception e) {
+            toast("WhatsApp introuvable sur ce téléphone.");
+        }
+    }
+
+    void surveillerRecherche() {
+        scanBar.setVisibility(View.VISIBLE);
+        scanPct.setVisibility(View.VISIBLE);
+        lastScanStatus = Store.scanStatus(this);
+        final int[] v = {0};
+        ui.post(new Runnable() {
+            public void run() {
+                String st = Store.scanStatus(MainActivity.this);
+                if (!st.equals(lastScanStatus) || v[0] >= 100) {
+                    scanBar.setProgress(100);
+                    scanPct.setText("✔ Recherche terminée");
+                    refreshGroups();
+                    refreshStatus();
+                    ui.postDelayed(() -> { scanBar.setVisibility(View.GONE); scanPct.setVisibility(View.GONE); }, 1500);
+                    return;
+                }
+                v[0] = Math.min(95, v[0] + 1 + (95 - v[0]) / 15);
+                scanBar.setProgress(v[0]);
+                scanPct.setText("Lecture de la liste… " + v[0] + " %");
+                ui.postDelayed(this, 400);
+            }
+        });
+    }
+
+    EditText num(String hint, String def) {
+        EditText e = new EditText(this);
+        e.setHint(hint);
+        e.setText(def);
+        e.setInputType(InputType.TYPE_CLASS_NUMBER);
+        return e;
+    }
+
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        setTitle("Planning Sossou Constant");
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1);
+        }
+        cal.add(Calendar.MINUTE, 2);
+        cal.set(Calendar.SECOND, 0);
+        cal.set(Calendar.MILLISECOND, 0);
+
+        root = new LinearLayout(this);
+        root.setBackgroundColor(BG);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(8), dp(16), dp(32));
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(BG);
+        sv.addView(root);
+        setContentView(sv);
+        getWindow().setStatusBarColor(BG);
+        TextView logo = new TextView(this);
+        logo.setText("Planning\nSossou Constant");
+        logo.setTextSize(30);
+        logo.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD));
+        logo.setTextColor(TXT);
+        logo.setGravity(Gravity.CENTER);
+        logo.setPadding(0, dp(24), 0, dp(4));
+        root.addView(logo);
+        TextView sub = new TextView(this);
+        sub.setText("Choisir • Planifier • Recevoir le récap sur WhatsApp");
+        sub.setTextColor(GOLD);
+        sub.setGravity(Gravity.CENTER);
+        root.addView(sub);
+        logo.setScaleX(0.7f); logo.setScaleY(0.7f); logo.setAlpha(0f);
+        logo.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(600).start();
+
+        // ---------- 1. Autorisations ----------
+        title(("1. Autorisations (une seule fois)"));
+        status = new TextView(this);
+        status.setTextSize(15);
+        add(status);
+        add(btn("Autoriser l'accès à WhatsApp (accessibilité)", v ->
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));
+        add(btn("Autoriser les alarmes exactes", v -> openExactSettings()));
+        add(btn("Désactiver l'optimisation batterie", v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            }
+        }));
+
+        // ---------- 2. Groupes ----------
+        title(("2. Choisir les groupes"));
+        add(btn("🔍 Rechercher mes groupes WhatsApp", v -> lancerRecherche()));
+        scanBar = bar(); add(scanBar); scanPct = pct(); add(scanPct);
+        scanStatus = new TextView(this);
+        scanStatus.setTextSize(13);
+        add(scanStatus);
+
+        filter = new EditText(this);
+        filter.setHint("Filtrer la liste…");
+        filter.setSingleLine(true);
+        filter.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b2, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b2, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                refreshGroups();
+            }
+        });
+        add(filter);
+        selCount = new TextView(this);
+        selCount.setPadding(0, dp(4), 0, dp(4));
+        add(selCount);
+        groupsBox = new LinearLayout(this);
+        groupsBox.setOrientation(LinearLayout.VERTICAL);
+        add(groupsBox);
+
+        manual = new EditText(this);
+        manual.setHint("Ajouter un groupe à la main (nom exact)");
+        manual.setSingleLine(true);
+        add(manual);
+        add(btn("Ajouter ce groupe", v -> {
+            String n = manual.getText().toString().trim();
+            if (n.isEmpty()) return;
+            Store.addManual(this, n);
+            selected.add(n);
+            manual.setText("");
+            refreshGroups();
+        }));
+
+        // ---------- 3. Horaires ----------
+        title(("3. Quand envoyer ?"));
+        RadioGroup rg = new RadioGroup(this);
+        rbInterval = new RadioButton(this);
+        rbInterval.setId(View.generateViewId());
+        rbInterval.setText("À intervalle régulier (ex : 5 fois, toutes les 30 min)");
+        rbFixed = new RadioButton(this);
+        rbFixed.setId(View.generateViewId());
+        rbFixed.setText("À des heures fixes (ex : 08:00, 12:30, 18:00)");
+        rg.addView(rbInterval);
+        rg.addView(rbFixed);
+        rbInterval.setChecked(true);
+        rg.setOnCheckedChangeListener((g, id) -> updateMode());
+        add(rg);
+
+        btnDate = btn("", v -> new DatePickerDialog(this, (dpk, y, m, d) -> {
+            cal.set(y, m, d);
+            refreshButtons();
+        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show());
+        add(btnDate);
+
+        intervalBox = new LinearLayout(this);
+        intervalBox.setOrientation(LinearLayout.VERTICAL);
+        btnTime = btn("", v -> new TimePickerDialog(this, (tp, h, m) -> {
+            cal.set(Calendar.HOUR_OF_DAY, h);
+            cal.set(Calendar.MINUTE, m);
+            cal.set(Calendar.SECOND, 0);
+            refreshButtons();
+        }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show());
+        intervalBox.addView(btnTime);
+        etCount = num("Nombre d'envois", "1");
+        etCount.setHint("Nombre d'envois (1 = un seul)");
+        intervalBox.addView(etCount);
+        etInterval = num("Intervalle en minutes", "60");
+        etInterval.setHint("Intervalle entre deux envois (minutes)");
+        intervalBox.addView(etInterval);
+        add(intervalBox);
+
+        fixedBox = new LinearLayout(this);
+        fixedBox.setOrientation(LinearLayout.VERTICAL);
+        etHours = new EditText(this);
+        etHours.setHint("Heures fixes, ex : 08:00, 12:30, 18:00");
+        etHours.setInputType(InputType.TYPE_CLASS_TEXT);
+        fixedBox.addView(etHours);
+        etDays = num("Nombre de jours", "1");
+        etDays.setHint("Pendant combien de jours (à partir de la date)");
+        fixedBox.addView(etDays);
+        add(fixedBox);
+
+        // ---------- 4. Message ----------
+        title(("4. Message (court ou long)"));
+        message = new EditText(this);
+        message.setHint("Écris ton message ici");
+        message.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        message.setMinLines(5);
+        message.setGravity(Gravity.TOP);
+        add(message);
+
+        add(btn("📅 Planifier", v -> planifier()));
+        planBar = bar(); add(planBar); planPct = pct(); add(planPct);
+        add(btn("Tester maintenant (envoi immédiat)", v -> tester()));
+
+        // ---------- Liste ----------
+        title(("5. Mon numéro WhatsApp"));
+        phone = styled(new EditText(this));
+        phone.setHint("Ton numéro avec indicatif, ex : 22901234567");
+        phone.setInputType(InputType.TYPE_CLASS_PHONE);
+        phone.setText(prefs().getString("phone", ""));
+        add(phone);
+        add(btn("💬 Envoyer le récapitulatif sur mon WhatsApp", v -> envoyerRecap()));
+
+        title(("Envois planifiés"));
+        list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        add(list);
+
+        for (EditText e : new EditText[]{filter, manual, message, etCount, etInterval, etHours, etDays}) styled(e);
+        for (TextView t : new TextView[]{status, scanStatus, selCount}) txt(t);
+        rbInterval.setTextColor(TXT); rbFixed.setTextColor(TXT);
+        rbInterval.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        rbFixed.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        updateMode();
+        refreshButtons();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshStatus();
+        refreshGroups();
+        refreshList();
+    }
+
+    void updateMode() {
+        boolean iv = rbInterval.isChecked();
+        intervalBox.setVisibility(iv ? View.VISIBLE : View.GONE);
+        fixedBox.setVisibility(iv ? View.GONE : View.VISIBLE);
+        refreshButtons();
+    }
+
+    void refreshButtons() {
+        boolean iv = rbInterval.isChecked();
+        btnDate.setText((iv ? "Date du premier envoi : " : "À partir du : ") + fDate.format(cal.getTime()));
+        btnTime.setText("Heure du premier envoi : " + fTime.format(cal.getTime()));
+    }
+
+    void refreshStatus() {
+        boolean acc = WaService.instance != null;
+        boolean alarm = Scheduler.canExact(this);
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        boolean bat = pm.isIgnoringBatteryOptimizations(getPackageName());
+        status.setText((acc ? "✔" : "✘") + " Accès à WhatsApp\n"
+                + (alarm ? "✔" : "✘") + " Alarmes exactes\n"
+                + (bat ? "✔" : "✘") + " Batterie non restreinte");
+        scanStatus.setText(Store.scanStatus(this));
+    }
+
+    void refreshGroups() {
+        groupsBox.removeAllViews();
+        String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
+        List<String> all = Store.loadGroups(this);
+        if (all.isEmpty()) {
+            TextView t = new TextView(this);
+            t.setTextColor(MUTED);
+            t.setText("Aucun groupe pour l'instant : appuie sur « Rechercher mes groupes WhatsApp ».");
+            groupsBox.addView(t);
+        }
+        for (final String g : all) {
+            if (!f.isEmpty() && !g.toLowerCase(Locale.ROOT).contains(f)) continue;
+            CheckBox cb = new CheckBox(this);
+            cb.setText(g);
+            cb.setChecked(selected.contains(g));
+            cb.setTextColor(TXT);
+            cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+            cb.setAlpha(0f);
+            cb.animate().alpha(1f).setDuration(300).setStartDelay(groupsBox.getChildCount() * 40L).start();
+            cb.setOnCheckedChangeListener((v, on) -> {
+                if (on) selected.add(g); else selected.remove(g);
+                selCount.setText(selected.size() + " groupe(s) sélectionné(s)");
+            });
+            groupsBox.addView(cb);
+        }
+        selCount.setText(selected.size() + " groupe(s) sélectionné(s)");
+    }
+
+    void lancerRecherche() {
+        WaService s = WaService.instance;
+        if (s == null) {
+            toast("Autorise d'abord l'accès à WhatsApp (accessibilité).");
+            return;
+        }
+        if (!s.startScan()) {
+            toast("Une opération est déjà en cours, réessaie dans un instant.");
+            return;
+        }
+        surveillerRecherche();
+        toast("Recherche en cours : ne touche pas à l'écran, tu reviens ici automatiquement.");
+    }
+
+    void openExactSettings() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            try {
+                startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                        Uri.parse("package:" + getPackageName())));
+                return;
+            } catch (Exception ignored) {
+            }
+        }
+        toast("Les alarmes exactes sont déjà autorisées.");
+    }
+
+    void toast(String s) {
+        Toast.makeText(this, s, Toast.LENGTH_LONG).show();
+    }
+
+    int parse(EditText e, int def) {
+        try {
+            return Integer.parseInt(e.getText().toString().trim());
+        } catch (Exception ex) {
+            return def;
+        }
+    }
+
+    /** Calcule la liste des heures d'envoi, ou null (avec un message) si invalide. */
+    List<Long> calculerHeures() {
+        List<Long> times = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        if (rbInterval.isChecked()) {
+            int count = parse(etCount, 1);
+            int mins = parse(etInterval, 60);
+            if (count < 1 || count > 300) {
+                toast("Nombre d'envois : entre 1 et 300.");
+                return null;
+            }
+            if (count > 1 && mins < 1) {
+                toast("Intervalle : au moins 1 minute.");
+                return null;
+            }
+            if (cal.getTimeInMillis() <= now + 5000) {
+                toast("Choisis une date et une heure dans le futur.");
+                return null;
+            }
+            for (int i = 0; i < count; i++) {
+                times.add(cal.getTimeInMillis() + i * mins * 60000L);
+            }
+        } else {
+            int days = parse(etDays, 1);
+            if (days < 1 || days > 60) {
+                toast("Nombre de jours : entre 1 et 60.");
+                return null;
+            }
+            String raw = etHours.getText().toString().trim();
+            if (raw.isEmpty()) {
+                toast("Saisis au moins une heure (ex : 08:00, 18:30).");
+                return null;
+            }
+            List<int[]> hm = new ArrayList<>();
+            try {
+                for (String part : raw.split("[,;\\s]+")) {
+                    if (part.isEmpty()) continue;
+                    part = part.toLowerCase(Locale.ROOT).replace('h', ':');
+                    if (part.endsWith(":")) part += "00";
+                    String[] x = part.split(":");
+                    int h = Integer.parseInt(x[0]);
+                    int m = x.length > 1 && !x[1].isEmpty() ? Integer.parseInt(x[1]) : 0;
+                    if (h < 0 || h > 23 || m < 0 || m > 59) throw new NumberFormatException();
+                    hm.add(new int[]{h, m});
+                }
+            } catch (Exception e) {
+                toast("Heures invalides. Exemple : 08:00, 12:30, 18:00");
+                return null;
+            }
+            for (int d = 0; d < days; d++) {
+                for (int[] t : hm) {
+                    Calendar c = (Calendar) cal.clone();
+                    c.add(Calendar.DAY_OF_MONTH, d);
+                    c.set(Calendar.HOUR_OF_DAY, t[0]);
+                    c.set(Calendar.MINUTE, t[1]);
+                    c.set(Calendar.SECOND, 0);
+                    c.set(Calendar.MILLISECOND, 0);
+                    if (c.getTimeInMillis() > now + 5000) times.add(c.getTimeInMillis());
+                }
+            }
+            if (times.isEmpty()) {
+                toast("Toutes ces heures sont déjà passées.");
+                return null;
+            }
+            if (times.size() > 300) {
+                toast("Trop d'envois (maximum 300).");
+                return null;
+            }
+        }
+        Collections.sort(times);
+        return times;
+    }
+
+    void planifier() {
+        String m = message.getText().toString();
+        if (selected.isEmpty()) {
+            toast("Coche au moins un groupe.");
+            return;
+        }
+        if (m.trim().isEmpty()) {
+            toast("Écris le message.");
+            return;
+        }
+        if (!Scheduler.canExact(this)) {
+            toast("Autorise d'abord les alarmes exactes.");
+            openExactSettings();
+            return;
+        }
+        List<Long> times = calculerHeures();
+        if (times == null) return;
+
+        Store.Plan p = new Store.Plan();
+        p.id = System.currentTimeMillis();
+        p.groups = new ArrayList<>(selected);
+        p.message = m;
+        p.times = times;
+        p.idx = 0;
+        progress(planBar, planPct, "Planification…", () -> {
+            Store.add(this, p);
+            Scheduler.schedule(this, p);
+            toast(times.size() + " envoi(s) planifié(s), le premier le "
+                    + fFull.format(new Date(times.get(0))));
+            refreshList();
+            if (!phone.getText().toString().replaceAll("\\D", "").isEmpty()) envoyerRecap();
+        });
+    }
+
+    void tester() {
+        String m = message.getText().toString();
+        if (selected.isEmpty() || m.trim().isEmpty()) {
+            toast("Coche au moins un groupe et écris le message.");
+            return;
+        }
+        if (WaService.instance == null) {
+            toast("Autorise d'abord l'accès à WhatsApp (accessibilité).");
+            return;
+        }
+        toast("Envoi en cours : ne touche pas à l'écran.");
+        for (String g : selected) WaService.instance.enqueue(new Job(0, g, m));
+    }
+
+    void refreshList() {
+        list.removeAllViews();
+        for (final Store.Plan p : Store.load(this)) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(0, dp(8), 0, dp(8));
+
+            String msg = p.message.replace('\n', ' ');
+            if (msg.length() > 80) msg = msg.substring(0, 80) + "…";
+            String head;
+            if (p.done) {
+                head = "✔ Terminé (" + p.times.size() + " envoi(s))";
+            } else {
+                head = "⏰ Prochain : " + fFull.format(new Date(p.times.get(p.idx)))
+                        + "  (" + (p.idx + 1) + "/" + p.times.size() + ")";
+            }
+            String t = head + "\nGroupes : " + join(p.groups) + "\n" + msg
+                    + (p.last == null || p.last.isEmpty() ? "" : "\n" + p.last);
+            TextView tv = new TextView(this);
+            tv.setText(t);
+            tv.setTextSize(14);
+            tv.setTextColor(TXT);
+            row.setBackground(round(BG, 14));
+            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(-1, -2);
+            rl.topMargin = dp(8);
+            row.setLayoutParams(rl);
+            row.setAlpha(0f);
+            row.animate().alpha(1f).setDuration(350).start();
+            row.addView(tv);
+
+            row.addView(btn("Supprimer", v -> {
+                Scheduler.cancel(this, p.id);
+                Store.remove(this, p.id);
+                refreshList();
+            }));
+            list.addView(row);
+        }
+    }
+
+    static String join(List<String> l) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < l.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(l.get(i));
+        }
+        return sb.toString();
+    }
+}

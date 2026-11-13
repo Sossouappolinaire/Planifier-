@@ -1,0 +1,74 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.4'
+    }
+}
+
+apply plugin: 'com.android.application'
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+// Tous les fichiers sont à la racine : on les range à la compilation
+// dans des dossiers temporaires (build/genjava et build/genres).
+def genJavaDir = new File(buildDir, 'genjava')
+def genResDir = new File(buildDir, 'genres')
+
+task genSources(type: Sync) {
+    into genJavaDir
+    from(projectDir) {
+        include '*.java'
+    }
+}
+
+task genRes(type: Sync) {
+    into genResDir
+    from('accessibility_service_config.xml') { into 'xml' }
+    from('strings.xml') { into 'values' }
+}
+
+android {
+    namespace 'bj.planificateur'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'bj.planificateur'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = [genJavaDir]
+            res.srcDirs = [genResDir]
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.matching { it.name == 'preBuild' }.configureEach {
+    dependsOn genSources, genRes
+}
