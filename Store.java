@@ -16,6 +16,38 @@ public class Store {
     static final String K_SCANNED = "groupes_trouves";
     static final String K_MANUAL = "groupes_manuels";
     static final String K_STATUS = "scan_status";
+    static final String K_PKG = "wa_pkg";
+
+    /** WhatsApp installés sur le téléphone (normal et/ou Business). */
+    public static List<String> installed(Context c) {
+        List<String> l = new ArrayList<>();
+        for (String p : new String[]{"com.whatsapp", "com.whatsapp.w4b"}) {
+            try {
+                c.getPackageManager().getPackageInfo(p, 0);
+                l.add(p);
+            } catch (Exception ignored) {
+            }
+        }
+        return l;
+    }
+
+    /** WhatsApp à utiliser : celui choisi s'il est installé, sinon le premier trouvé. */
+    public static String waPkg(Context c) {
+        List<String> in = installed(c);
+        String pref = sp(c).getString(K_PKG, "");
+        if (in.contains(pref)) return pref;
+        return in.isEmpty() ? "com.whatsapp" : in.get(0);
+    }
+
+    public static void setWaPkg(Context c, String p) {
+        sp(c).edit().putString(K_PKG, p).apply();
+    }
+
+    /** Les groupes diffèrent d'un WhatsApp à l'autre : une liste par application. */
+    static String sfx(Context c) {
+        String p = waPkg(c);
+        return p.equals("com.whatsapp") ? "" : "_" + p;
+    }
 
     public static class Plan {
         public long id;
@@ -144,8 +176,8 @@ public class Store {
     /** Groupes trouvés dans WhatsApp + groupes ajoutés à la main, triés, sans doublon. */
     public static synchronized List<String> loadGroups(Context c) {
         List<String> all = new ArrayList<>();
-        for (String s : readList(c, K_SCANNED)) addUnique(all, s);
-        for (String s : readList(c, K_MANUAL)) addUnique(all, s);
+        for (String s : readList(c, K_SCANNED + sfx(c))) addUnique(all, s);
+        for (String s : readList(c, K_MANUAL + sfx(c))) addUnique(all, s);
         Collections.sort(all, String.CASE_INSENSITIVE_ORDER);
         return all;
     }
@@ -156,13 +188,13 @@ public class Store {
     }
 
     public static synchronized void saveScanned(Context c, List<String> l) {
-        writeList(c, K_SCANNED, l);
+        writeList(c, K_SCANNED + sfx(c), l);
     }
 
     public static synchronized void addManual(Context c, String name) {
-        List<String> l = readList(c, K_MANUAL);
+        List<String> l = readList(c, K_MANUAL + sfx(c));
         addUnique(l, name);
-        writeList(c, K_MANUAL, l);
+        writeList(c, K_MANUAL + sfx(c), l);
     }
 
     public static String scanStatus(Context c) {

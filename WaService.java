@@ -118,13 +118,37 @@ public class WaService extends AccessibilityService {
         }
     }
 
+    /** Le WhatsApp choisi par l'utilisateur passe en premier. */
+    String[] order() {
+        return Store.waPkg(this).equals(PKGS[0]) ? PKGS : new String[]{PKGS[1], PKGS[0]};
+    }
+
     boolean launch(String text) {
-        for (String pkg : PKGS) {
+        for (String pkg : order()) {
             try {
                 getPackageManager().getPackageInfo(pkg, 0);
                 Intent i = new Intent(Intent.ACTION_SEND);
                 i.setType("text/plain");
                 i.putExtra(Intent.EXTRA_TEXT, text);
+                i.setPackage(pkg);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                startActivity(i);
+                return true;
+            } catch (PackageManager.NameNotFoundException e) {
+                // essaie le suivant
+            } catch (Exception e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /** Ouvre un lien WhatsApp (wa.me) directement dans l'appli installée. */
+    boolean launchUri(String uri) {
+        for (String pkg : order()) {
+            try {
+                getPackageManager().getPackageInfo(pkg, 0);
+                Intent i = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(uri));
                 i.setPackage(pkg);
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                 startActivity(i);
@@ -294,7 +318,14 @@ public class WaService extends AccessibilityService {
         clicks = 0;
         startedAt = System.currentTimeMillis();
         stepAt = startedAt;
-        if (!launch(cur.message)) {
+        boolean ok;
+        if (cur.uri != null) {
+            ok = launchUri(cur.uri);
+            step = 1; // la discussion est déjà ouverte : on appuie directement sur Envoyer
+        } else {
+            ok = launch(cur.message);
+        }
+        if (!ok) {
             finish(false, "WhatsApp n'est pas installé");
             return;
         }

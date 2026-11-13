@@ -12,4 +12,8 @@
 - Si la recherche ne trouve rien, ajouter les groupes à la main (nom exact).
 - Tous les fichiers sont à la racine (sauf .github) ; build.gradle les range à la compilation.
 
-- Section 5 : saisir ton numéro WhatsApp ; après chaque planification, WhatsApp s’ouvre avec le récapitulatif (groupes trouvés + envois planifiés) prêt à t’envoyer.
+- Section 5 : saisir ton numéro WhatsApp ; après chaque planification, le récapitulatif (groupes trouvés + envois planifiés) est envoyé automatiquement sur ton WhatsApp, sans cliquer sur Envoyer (accessibilité requise).
+
+- Écran : tableau de bord (groupes choisis / envois en attente / prochain envoi), puis panneaux 1 Autorisations (se replie quand tout est prêt) • 2 Groupes • 3 Horaires • 4 Message et envoi • 5 Envois planifiés • 6 Récapitulatif.
+
+- Si WhatsApp et WhatsApp Business sont installés : choisir lequel utiliser dans le panneau « 2. Choisir les groupes » ; chaque WhatsApp a sa propre liste de groupes. Les doubles applications (Dual Messenger, Second Space) ne sont pas gérées.
