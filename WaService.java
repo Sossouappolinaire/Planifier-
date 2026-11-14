@@ -33,6 +33,9 @@ public class WaService extends AccessibilityService {
             "discussions récentes", "recent chats", "chats récents", "chats récents",
             "contacts fréquents", "frequent contacts", "frequently contacted",
             "discussions", "chats"};
+    static final String[] VIEW_GROUP = {"voir le groupe", "view group", "ouvrir le groupe", "open group"};
+    static final String[] JOIN_GROUP = {"rejoindre le groupe", "join group", "join chat",
+            "rejoindre la discussion", "unirse al grupo"};
     static final long TIMEOUT = 60000;
 
     final Handler h = new Handler(Looper.getMainLooper());
@@ -44,7 +47,7 @@ public class WaService extends AccessibilityService {
     int step;            // 0 = choisir le groupe, 1 = appuyer sur Envoyer
     int typed;
     int clicks;
-    long startedAt, stepAt, lastClick, lastTick;
+    long startedAt, stepAt, lastClick, lastTick, lastType;
 
     // --- recherche des groupes ---
     boolean scanning;
@@ -64,6 +67,8 @@ public class WaService extends AccessibilityService {
             if (now - startedAt > TIMEOUT) {
                 finish(false, step == 0
                         ? "groupe « " + cur.group + " » introuvable (ou écran verrouillé)"
+                        : step == 2
+                        ? "discussion du groupe introuvable (lien invalide, tu n'es plus membre, ou écran verrouillé)"
                         : "bouton Envoyer introuvable");
                 return;
             }
@@ -315,9 +320,14 @@ public class WaService extends AccessibilityService {
         startedAt = System.currentTimeMillis();
         stepAt = startedAt;
         boolean ok;
+        typed = 0;
+        lastType = 0;
         if (cur.uri != null) {
             ok = launchUri(cur.uri);
             step = 1; // la discussion est déjà ouverte : on appuie directement sur Envoyer
+        } else if (cur.link != null) {
+            ok = launchUri(cur.link);
+            step = 2; // lien du groupe : la discussion s'ouvre, il reste à écrire puis envoyer
         } else {
             ok = launch(cur.message);
         }
@@ -329,15 +339,29 @@ public class WaService extends AccessibilityService {
         h.postDelayed(poll, 1500);
     }
 
+    static final int MAX_RETRY = 2;          // 2 réessais, soit 3 essais au total
+    static final long RETRY_DELAY = 120000;  // 2 minutes entre deux essais
+
     void finish(boolean ok, String msg) {
         Job j = cur;
         cur = null;
         h.removeCallbacks(poll);
         if (j != null) {
             String hour = new SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE).format(new Date());
-            String line = (ok ? "✔ " : "✘ ") + hour + " — " + j.group + " : " + msg;
+            // Inutile de réessayer si WhatsApp est absent ou si le compte n'est pas dans le groupe
+            boolean retry = !ok && j.attempt < MAX_RETRY
+                    && !msg.contains("pas installé") && !msg.contains("pas membre");
+            String suffix = retry ? " — nouvel essai dans 2 min (essai " + (j.attempt + 2) + " sur "
+                    + (MAX_RETRY + 1) + ")" : "";
+            String line = (ok ? "✔ " : "✘ ") + hour + " — " + j.group + " : " + msg + suffix;
             Store.setLast(this, j.id, line);
-            Notifier.show(this, ok ? "Message envoyé" : "Échec d'envoi", j.group + " : " + msg);
+            Store.addHistory(this, j.group, ok, msg + suffix, j.attempt);
+            Notifier.show(this, ok ? "Message envoyé" : "Échec d'envoi",
+                    hour + " — " + j.group + " : " + msg + suffix);
+            if (retry) {
+                final Job r = new Job(j.id, j.group, j.message, j.uri, j.link, j.attempt + 1);
+                h.postDelayed(() -> enqueue(r), RETRY_DELAY);
+            }
         }
         h.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_HOME), 1200);
         h.postDelayed(this::next, 3000);
@@ -354,6 +378,11 @@ public class WaService extends AccessibilityService {
         if (root == null || root.getPackageName() == null) return;
         String pkg = root.getPackageName().toString();
         if (!isWa(pkg)) return;
+
+        if (step == 2) {
+            tickLink(root, pkg, now);
+            return;
+        }
 
         if (step == 0) {
             AccessibilityNodeInfo hit = findText(root, cur.group, true);
@@ -395,6 +424,60 @@ public class WaService extends AccessibilityService {
                 finish(true, "message envoyé");
             }
         }
+    }
+
+    /** Discussion ouverte par le lien du groupe : écrit le message puis passe à l'étape « Envoyer ». */
+    void tickLink(AccessibilityNodeInfo root, String pkg, long now) {
+        AccessibilityNodeInfo ed = findEdit(root);
+        if (ed == null) {
+            // Pas de champ de saisie : écran d'invitation, ou WhatsApp pas encore prêt
+            for (String w : VIEW_GROUP) {
+                budget = MAX_NODES;
+                AccessibilityNodeInfo v = findText(root, w, true);
+                if (v != null) {
+                    click(v);
+                    return;
+                }
+            }
+            for (String w : JOIN_GROUP) {
+                budget = MAX_NODES;
+                if (findText(root, w, true) != null) {
+                    finish(false, "tu n'es pas membre de ce groupe (le lien propose de le rejoindre)");
+                    return;
+                }
+            }
+            return;
+        }
+        String want = norm(cur.message);
+        String have = ed.getText() == null ? "" : norm(ed.getText().toString());
+        if (have.equals(want)) {
+            step = 1;
+            stepAt = now;
+            clicks = 0;
+            return;
+        }
+        // Le bouton Envoyer n'apparaît que lorsque le champ contient du texte
+        if (typed > 0 && now - lastType > 900) {
+            budget = MAX_NODES;
+            if (findSend(root, pkg) != null) {
+                step = 1;
+                stepAt = now;
+                clicks = 0;
+                return;
+            }
+        }
+        if (now - lastType > 1500 && typed < 6) {
+            ed.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+            Bundle b = new Bundle();
+            b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, cur.message);
+            ed.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b);
+            typed++;
+            lastType = now;
+        }
+    }
+
+    static String norm(String s) {
+        return s == null ? "" : s.replace("\r", "").trim();
     }
 
     // =====================================================================

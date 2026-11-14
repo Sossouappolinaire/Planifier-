@@ -46,7 +46,7 @@ public class AlarmReceiver extends BroadcastReceiver {
             return;
         }
         for (String g : groups) {
-            s.enqueue(new Job(p.id, g, message));
+            s.enqueue(new Job(p.id, g, message, null, Store.linkOf(ctx, g)));
         }
     }
 }

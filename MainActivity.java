@@ -37,6 +37,10 @@ import android.content.pm.PackageManager;
 import android.text.SpannableStringBuilder;
 import android.text.style.ForegroundColorSpan;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -50,7 +54,10 @@ import java.util.TreeSet;
 
 public class MainActivity extends Activity {
 
-    TextView status, scanStatus, selCount;
+    TextView status, scanStatus, selCount, lienStatus;
+    EditText lien;
+    LinearLayout histBox;
+    View btnLien;
     EditText filter, manual, message, etCount, etInterval, etHours, etDays;
     Button btnDate, btnTime;
     RadioButton rbInterval, rbFixed;
@@ -264,7 +271,7 @@ public class MainActivity extends Activity {
         prefs().edit().putString("phone", num).apply();
         StringBuilder sb = new StringBuilder("*Planning Sossou Constant* — récapitulatif\n\n");
         List<String> g = Store.loadConfirmed(this);
-        sb.append("Groupes trouvés (").append(g.size()).append(") : ").append(g.isEmpty() ? "aucun" : join(g)).append("\n\n");
+        sb.append("Groupes (").append(g.size()).append(") : ").append(g.isEmpty() ? "aucun" : join(g)).append("\n\n");
         int i = 1;
         for (Store.Plan p : Store.load(this)) {
             sb.append("*Planification ").append(i++).append("*").append(p.done ? " (terminée)" : "").append("\n");
@@ -435,15 +442,14 @@ public class MainActivity extends Activity {
                 selected.clear();
                 refreshGroups();
                 cand.clear();
-                toast("WhatsApp changé : relance la recherche de tes groupes.");
+                toast("WhatsApp changé : ajoute tes groupes avec leur lien.");
             });
             add(rgw);
         }
-        add(btn("🔍 Rechercher mes groupes WhatsApp", v -> lancerRecherche()));
-        scanBar = bar(); add(scanBar); scanPct = pct(); add(scanPct);
+        // Plus de recherche : les groupes s'ajoutent avec leur lien (voir plus bas).
+        scanBar = bar();
+        scanPct = pct();
         scanStatus = new TextView(this);
-        scanStatus.setTextSize(13);
-        add(scanStatus);
 
         filter = new EditText(this);
         filter.setHint("Filtrer la liste…");
@@ -467,18 +473,25 @@ public class MainActivity extends Activity {
         groupsBox.setOrientation(LinearLayout.VERTICAL);
         add(groupsBox);
 
+        TextView aideLien = new TextView(this);
+        aideLien.setText("Ajouter un groupe : colle son lien d'invitation (WhatsApp > infos du groupe > "
+                + "Inviter via un lien). L'appli retrouve le nom exact toute seule.");
+        aideLien.setTextColor(MUTED);
+        aideLien.setPadding(0, dp(10), 0, dp(4));
+        add(aideLien);
+        lien = new EditText(this);
+        lien.setHint("https://chat.whatsapp.com/…");
+        lien.setSingleLine(true);
+        add(lien);
         manual = new EditText(this);
-        manual.setHint("Ajouter un groupe à la main (nom exact)");
+        manual.setHint("Nom du groupe (seulement si le nom n'est pas trouvé tout seul)");
         manual.setSingleLine(true);
         add(manual);
-        add(btn("Ajouter ce groupe", v -> {
-            String n = manual.getText().toString().trim();
-            if (n.isEmpty()) return;
-            Store.addManual(this, n);
-            selected.add(n);
-            manual.setText("");
-            refreshGroups();
-        }));
+        lienStatus = new TextView(this);
+        lienStatus.setTextColor(MUTED);
+        add(lienStatus);
+        btnLien = btn("🔗 Ajouter le groupe avec son lien", v -> ajouterParLien());
+        add(btnLien);
 
         // ---------- 3. Horaires ----------
         title(("3. Quand envoyer ?"));
@@ -558,7 +571,17 @@ public class MainActivity extends Activity {
         add(phone);
         add(btn("💬 Envoyer le récapitulatif sur mon WhatsApp", v -> envoyerRecap()));
 
-        for (EditText e : new EditText[]{filter, manual, message, etCount, etInterval, etHours, etDays}) styled(e);
+        // ---------- 7. Historique ----------
+        title("7. Historique des envois", false);
+        histBox = new LinearLayout(this);
+        histBox.setOrientation(LinearLayout.VERTICAL);
+        add(histBox);
+        add(btn("Effacer l'historique", v -> {
+            Store.clearHistory(this);
+            refreshHistory();
+        }));
+
+        for (EditText e : new EditText[]{filter, lien, manual, message, etCount, etInterval, etHours, etDays}) styled(e);
         for (TextView t : new TextView[]{status, scanStatus, selCount}) txt(t);
         rbInterval.setTextColor(TXT); rbFixed.setTextColor(TXT);
         rbInterval.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
@@ -573,6 +596,7 @@ public class MainActivity extends Activity {
         refreshStatus();
         refreshGroups();
         refreshList();
+        refreshHistory();
         if (!permChecked) {
             permChecked = true;
             if (permOk) setOpen(permTitle, permBody, false, false); // tout est prêt : on replie
@@ -631,40 +655,14 @@ public class MainActivity extends Activity {
         groupsBox.removeAllViews();
         String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
         List<String> mine = Store.loadConfirmed(this);
-        List<String> found = Store.loadScanned(this);
-        found.removeAll(mine);
         selected.retainAll(mine);
-        cand.retainAll(found);
-
-        // --- Résultats de la recherche : groupes et contacts mélangés ---
-        if (!found.isEmpty()) {
-            groupsBox.addView(sousTitre("Résultats de la recherche (" + found.size() + ")"));
-            TextView aide = new TextView(this);
-            aide.setTextColor(MUTED);
-            aide.setText("Coche UNIQUEMENT les groupes (pas les contacts), puis valide. "
-                    + "Tout ce qui n'est pas coché sera supprimé de la liste.");
-            groupsBox.addView(aide);
-            for (final String g : found) {
-                if (!f.isEmpty() && !g.toLowerCase(Locale.ROOT).contains(f)) continue;
-                CheckBox cb = new CheckBox(this);
-                cb.setText(g);
-                cb.setChecked(cand.contains(g));
-                cb.setTextColor(TXT);
-                cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
-                cb.setOnCheckedChangeListener((v, on) -> {
-                    if (on) cand.add(g); else cand.remove(g);
-                });
-                groupsBox.addView(cb);
-            }
-            groupsBox.addView(btn("✔ Valider les groupes cochés", v -> validerGroupes()));
-        }
 
         // --- Mes groupes : seuls ceux-là servent à envoyer ---
         groupsBox.addView(sousTitre("Mes groupes (" + mine.size() + ")"));
         if (mine.isEmpty()) {
             TextView t = new TextView(this);
             t.setTextColor(MUTED);
-            t.setText("Aucun groupe validé : lance la recherche, coche tes groupes puis valide.");
+            t.setText("Aucun groupe : colle le lien d'un groupe ci-dessous pour l'ajouter.");
             groupsBox.addView(t);
         }
         for (final String g : mine) {
@@ -673,7 +671,7 @@ public class MainActivity extends Activity {
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
             CheckBox cb = new CheckBox(this);
-            cb.setText(g);
+            cb.setText(g + (Store.linkOf(this, g) != null ? "  🔗" : "  (sans lien)"));
             cb.setChecked(selected.contains(g));
             cb.setTextColor(TXT);
             cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
@@ -700,19 +698,77 @@ public class MainActivity extends Activity {
         refreshDashboard();
     }
 
-    /** Garde uniquement les noms cochés comme groupes ; le reste de la recherche est effacé. */
-    void validerGroupes() {
-        if (cand.isEmpty()) {
-            toast("Coche d'abord les groupes dans les résultats.");
+    /** Ajoute un groupe à partir de son lien d'invitation : retrouve son nom exact sur la page du lien. */
+    void ajouterParLien() {
+        final String code = Store.inviteCode(lien.getText().toString());
+        if (code == null) {
+            toast("Lien invalide : il doit ressembler à https://chat.whatsapp.com/…");
             return;
         }
-        List<String> ok = new ArrayList<>(cand);
-        Store.addConfirmed(this, ok);
-        Store.clearScanned(this);
-        selected.addAll(ok);
-        cand.clear();
-        toast(ok.size() + " groupe(s) validé(s).");
-        refreshGroups();
+        final String link = Store.inviteUrl(code);
+        final String saisi = manual.getText().toString().trim();
+        btnLien.setEnabled(false);
+        lienStatus.setText("Recherche du nom exact du groupe…");
+        new Thread(() -> {
+            String trouve = null;
+            try {
+                trouve = nomDuGroupe(code);
+            } catch (Exception ignored) {
+            }
+            final String nom = trouve;
+            ui.post(() -> {
+                btnLien.setEnabled(true);
+                String finalName = nom != null ? nom : saisi;
+                if (finalName.isEmpty()) {
+                    lienStatus.setText("✘ Nom introuvable automatiquement (pas de réseau, ou lien révoqué). "
+                            + "Écris le nom du groupe dans le champ ci-dessus puis ré-appuie.");
+                    return;
+                }
+                // Deux groupes différents ne doivent pas porter le même nom
+                String other = Store.linkOf(this, finalName);
+                if (other != null && !other.equals(link)) finalName = finalName + " (2)";
+                Store.addGroup(this, finalName, link);
+                selected.add(finalName);
+                lien.setText("");
+                manual.setText("");
+                lienStatus.setText("✔ Ajouté : " + finalName + (nom == null ? " (nom saisi à la main)" : " (nom exact trouvé)"));
+                refreshGroups();
+            });
+        }).start();
+    }
+
+    /** Lit le nom du groupe dans la page publique du lien d'invitation. */
+    String nomDuGroupe(String code) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(Store.inviteUrl(code)).openConnection();
+        c.setConnectTimeout(8000);
+        c.setReadTimeout(8000);
+        c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36");
+        c.setRequestProperty("Accept-Language", "fr");
+        try {
+            BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            char[] buf = new char[4096];
+            int n;
+            while ((n = r.read(buf)) > 0 && sb.length() < 300000) sb.append(buf, 0, n);
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("<meta[^>]+property=[\"']og:title[\"'][^>]+content=[\"']([^\"']*)[\"']",
+                            java.util.regex.Pattern.CASE_INSENSITIVE).matcher(sb);
+            if (!m.find()) {
+                m = java.util.regex.Pattern
+                        .compile("<meta[^>]+content=[\"']([^\"']*)[\"'][^>]+property=[\"']og:title[\"']",
+                                java.util.regex.Pattern.CASE_INSENSITIVE).matcher(sb);
+                if (!m.find()) return null;
+            }
+            String t = android.text.Html.fromHtml(m.group(1), android.text.Html.FROM_HTML_MODE_LEGACY)
+                    .toString().trim();
+            // Titre générique renvoyé pour un lien invalide ou révoqué
+            if (t.isEmpty() || t.equalsIgnoreCase("WhatsApp Group Invite")
+                    || t.equalsIgnoreCase("WhatsApp")) return null;
+            return t;
+        } finally {
+            c.disconnect();
+        }
     }
 
     void lancerRecherche() {
@@ -873,7 +929,7 @@ public class MainActivity extends Activity {
             return;
         }
         toast("Envoi en cours : ne touche pas à l'écran.");
-        for (String g : selected) WaService.instance.enqueue(new Job(0, g, m));
+        for (String g : selected) WaService.instance.enqueue(new Job(0, g, m, null, Store.linkOf(this, g)));
     }
 
     void refreshList() {
@@ -919,6 +975,17 @@ public class MainActivity extends Activity {
             list.addView(row);
         }
         refreshDashboard();
+    }
+
+    void refreshHistory() {
+        if (histBox == null) return;
+        histBox.removeAllViews();
+        List<String> h = Store.historyLines(this, 30);
+        if (h.isEmpty()) {
+            histBox.addView(ligneTxt("Aucun envoi pour l'instant.", 14, MUTED, false));
+            return;
+        }
+        for (String l : h) histBox.addView(ligneTxt(l, 13, l.startsWith("✔") ? TXT : RED, false));
     }
 
     TextView ligneTxt(String s, int size, int color, boolean bold) {

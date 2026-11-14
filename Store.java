@@ -16,6 +16,9 @@ public class Store {
     static final String K_SCANNED = "groupes_trouves";
     static final String K_MANUAL = "groupes_manuels";
     static final String K_CONFIRMED = "groupes_confirmes";
+    static final String K_LINKS = "groupes_liens";
+    static final String K_HIST = "historique_envois";
+    static final int HIST_MAX = 100;
     static final String K_STATUS = "scan_status";
     static final String K_PKG = "wa_pkg";
 
@@ -199,6 +202,105 @@ public class Store {
     }
 
 
+
+
+    // ---------- Historique des envois ----------
+
+    /** Ajoute un envoi (réussi ou échoué) en tête de l'historique ; garde les 100 derniers. */
+    public static synchronized void addHistory(Context c, String group, boolean ok, String msg, int attempt) {
+        try {
+            JSONArray old = new JSONArray(sp(c).getString(K_HIST, "[]"));
+            JSONArray n = new JSONArray();
+            JSONObject o = new JSONObject();
+            o.put("t", System.currentTimeMillis());
+            o.put("g", group);
+            o.put("ok", ok);
+            o.put("m", msg);
+            o.put("a", attempt);
+            n.put(o);
+            for (int i = 0; i < old.length() && n.length() < HIST_MAX; i++) n.put(old.get(i));
+            sp(c).edit().putString(K_HIST, n.toString()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Les derniers envois, déjà mis en forme (le plus récent d'abord). */
+    public static synchronized List<String> historyLines(Context c, int max) {
+        List<String> out = new ArrayList<>();
+        try {
+            JSONArray a = new JSONArray(sp(c).getString(K_HIST, "[]"));
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.FRANCE);
+            for (int i = 0; i < a.length() && out.size() < max; i++) {
+                JSONObject o = a.getJSONObject(i);
+                int at = o.optInt("a", 0);
+                out.add((o.optBoolean("ok") ? "✔ " : "✘ ") + f.format(new java.util.Date(o.optLong("t")))
+                        + " — " + o.optString("g") + (at > 0 ? " (essai " + (at + 1) + ")" : "")
+                        + " : " + o.optString("m"));
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    public static synchronized void clearHistory(Context c) {
+        sp(c).edit().remove(K_HIST).apply();
+    }
+
+    // ---------- Liens d'invitation des groupes ----------
+
+    /** Extrait le code d'un lien https://chat.whatsapp.com/CODE (ou null si ce n'est pas un lien de groupe). */
+    public static String inviteCode(String s) {
+        if (s == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("chat\\.whatsapp\\.com/(?:invite/)?([A-Za-z0-9_-]{10,})").matcher(s.trim());
+        return m.find() ? m.group(1) : null;
+    }
+
+    public static String inviteUrl(String code) {
+        return "https://chat.whatsapp.com/" + code;
+    }
+
+    static JSONObject linksObj(Context c) {
+        try {
+            return new JSONObject(sp(c).getString(K_LINKS + sfx(c), "{}"));
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    public static synchronized String linkOf(Context c, String name) {
+        JSONObject o = linksObj(c);
+        java.util.Iterator<String> it = o.keys();
+        while (it.hasNext()) {
+            String k = it.next();
+            if (k.equalsIgnoreCase(name)) return o.optString(k, null);
+        }
+        return null;
+    }
+
+    /** Enregistre un groupe avec son nom exact et son lien d'invitation. */
+    public static synchronized void addGroup(Context c, String name, String link) {
+        addConfirmed(c, java.util.Collections.singletonList(name));
+        try {
+            JSONObject o = linksObj(c);
+            o.put(name, link);
+            sp(c).edit().putString(K_LINKS + sfx(c), o.toString()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    static synchronized void removeLink(Context c, String name) {
+        JSONObject o = linksObj(c);
+        java.util.Iterator<String> it = o.keys();
+        List<String> del = new ArrayList<>();
+        while (it.hasNext()) {
+            String k = it.next();
+            if (k.equalsIgnoreCase(name)) del.add(k);
+        }
+        for (String k : del) o.remove(k);
+        sp(c).edit().putString(K_LINKS + sfx(c), o.toString()).apply();
+    }
+
     // ---------- Groupes confirmés par l'utilisateur ----------
 
     /** Noms lus dans WhatsApp (groupes ET contacts mélangés) : à trier par l'utilisateur. */
@@ -228,6 +330,7 @@ public class Store {
     }
 
     public static synchronized void removeConfirmed(Context c, String name) {
+        removeLink(c, name);
         for (String key : new String[]{K_CONFIRMED + sfx(c), K_MANUAL + sfx(c)}) {
             List<String> l = readList(c, key);
             for (int i = l.size() - 1; i >= 0; i--) {
