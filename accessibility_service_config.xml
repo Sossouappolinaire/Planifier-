@@ -5,5 +5,5 @@
     android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="500"
-    android:packageNames="com.whatsapp,com.whatsapp.w4b"
+    android:canPerformGestures="true"
     android:description="@string/service_desc" />

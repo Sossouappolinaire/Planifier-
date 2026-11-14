@@ -226,20 +226,42 @@ public class Store {
 
     /** Les derniers envois, déjà mis en forme (le plus récent d'abord). */
     public static synchronized List<String> historyLines(Context c, int max) {
+        return historyLines(c, max, 0);
+    }
+
+    /** mode : 0 = tous, 1 = envois validés seulement, 2 = échecs seulement. */
+    public static synchronized List<String> historyLines(Context c, int max, int mode) {
         List<String> out = new ArrayList<>();
         try {
             JSONArray a = new JSONArray(sp(c).getString(K_HIST, "[]"));
             java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.FRANCE);
             for (int i = 0; i < a.length() && out.size() < max; i++) {
                 JSONObject o = a.getJSONObject(i);
+                boolean ok = o.optBoolean("ok");
+                if (mode == 1 && !ok) continue;
+                if (mode == 2 && ok) continue;
                 int at = o.optInt("a", 0);
-                out.add((o.optBoolean("ok") ? "✔ " : "✘ ") + f.format(new java.util.Date(o.optLong("t")))
+                out.add((ok ? "✔ " : "✘ ") + f.format(new java.util.Date(o.optLong("t")))
                         + " — " + o.optString("g") + (at > 0 ? " (essai " + (at + 1) + ")" : "")
                         + " : " + o.optString("m"));
             }
         } catch (Exception ignored) {
         }
         return out;
+    }
+
+    /** Nombre d'envois gardés dans l'historique (mode : 0 = tous, 1 = validés, 2 = échecs). */
+    public static synchronized int historyCount(Context c, int mode) {
+        int n = 0;
+        try {
+            JSONArray a = new JSONArray(sp(c).getString(K_HIST, "[]"));
+            for (int i = 0; i < a.length(); i++) {
+                boolean ok = a.getJSONObject(i).optBoolean("ok");
+                if (mode == 0 || (mode == 1 && ok) || (mode == 2 && !ok)) n++;
+            }
+        } catch (Exception ignored) {
+        }
+        return n;
     }
 
     public static synchronized void clearHistory(Context c) {

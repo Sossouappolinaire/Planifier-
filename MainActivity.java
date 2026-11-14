@@ -54,16 +54,20 @@ import java.util.TreeSet;
 
 public class MainActivity extends Activity {
 
-    TextView status, scanStatus, selCount, lienStatus;
-    EditText lien;
-    LinearLayout histBox;
+    // ---- Champs de saisie et zones à remplir ----
+    TextView status, selCount, lienStatus, pinStatus;
+    CheckBox cbUnlock, cbRelock;
+    EditText etPin;
+    EditText lien, filter, manual, message, etCount, etInterval, etHours, etDays, phone;
     View btnLien;
-    EditText filter, manual, message, etCount, etInterval, etHours, etDays;
     Button btnDate, btnTime;
     RadioButton rbInterval, rbFixed;
-    LinearLayout groupsBox, intervalBox, fixedBox, list;
+    LinearLayout groupsBox, manageBox, intervalBox, fixedBox;
+    LinearLayout histBox, failBox, okBox, alertBox;
+    ProgressBar planBar;
+    TextView planPct;
+
     final Set<String> selected = new LinkedHashSet<>();
-    final Set<String> cand = new LinkedHashSet<>(); // noms cochés dans les résultats de recherche
     final Calendar cal = Calendar.getInstance();
     final SimpleDateFormat fDate = new SimpleDateFormat("EEE dd/MM/yyyy", Locale.FRANCE);
     final SimpleDateFormat fTime = new SimpleDateFormat("HH:mm", Locale.FRANCE);
@@ -75,18 +79,21 @@ public class MainActivity extends Activity {
 
     static final int BG = Color.parseColor("#0E1F17"), CARD = Color.parseColor("#16302A"),
             GREEN = Color.parseColor("#25D366"), GREEN2 = Color.parseColor("#128C7E"),
-            TXT = Color.parseColor("#EAF7EF"), MUTED = Color.parseColor("#9DB8AA"), GOLD = Color.parseColor("#F5C451");
-    LinearLayout root, cur;
-    int sectionNo = 0;
-    EditText phone;
-    ProgressBar scanBar, planBar;
-    TextView planPct, scanPct;
+            TXT = Color.parseColor("#EAF7EF"), MUTED = Color.parseColor("#9DB8AA"), GOLD = Color.parseColor("#F5C451"),
+            RED = Color.parseColor("#FF6B6B"), RED2 = Color.parseColor("#B03A3A"),
+            BACK = Color.parseColor("#1F4036");
+
+    // ---- Navigation : un accueil + des panneaux ----
+    ScrollView scroll;
+    LinearLayout holder;      // contient l'écran affiché (accueil ou un panneau)
+    LinearLayout home;        // accueil
+    LinearLayout pPlan, pHist, pFail, pOk, pGroups, pAlert, pSet;
+    View currentView;
+    LinearLayout cur;         // zone où add() ajoute les vues pendant la construction d'un panneau
     final Handler ui = new Handler(Looper.getMainLooper());
-    String lastScanStatus = "";
-    static final int RED = Color.parseColor("#FF6B6B"), RED2 = Color.parseColor("#B03A3A");
-    TextView vGroups, vWaiting, vNext, permTitle;
-    LinearLayout permBody;
-    boolean permChecked, permOk, planning;
+    TextView vGroups, vWaiting, vNext;
+    TextView bdHist, bdFail, bdOk, bdGroups, bdAlert, bdSet;
+    boolean permOk, planning;
 
     GradientDrawable round(int color, int r) {
         GradientDrawable g = new GradientDrawable();
@@ -97,56 +104,102 @@ public class MainActivity extends Activity {
 
     void add(View v) { cur.addView(v); }
 
-    /** Ouvre ou ferme un panneau. */
-    void setOpen(TextView tv, LinearLayout body, boolean open, boolean anim) {
-        String t = (String) tv.getTag();
-        tv.setText((open ? "▾  " : "▸  ") + t);
-        if (!anim) {
-            body.setVisibility(open ? View.VISIBLE : View.GONE);
-            return;
-        }
-        if (open) {
-            body.setVisibility(View.VISIBLE);
-            body.setAlpha(0f);
-            body.setTranslationY(-dp(10));
-            body.animate().alpha(1f).translationY(0).setDuration(300).start();
-        } else {
-            body.animate().alpha(0f).translationY(-dp(10)).setDuration(220)
-                    .withEndAction(() -> body.setVisibility(View.GONE)).start();
-        }
+    /** Affiche l'accueil ou un panneau (un seul à la fois). */
+    void show(View v) {
+        holder.removeAllViews();
+        holder.addView(v);
+        currentView = v;
+        scroll.scrollTo(0, 0);
+        v.setAlpha(0f);
+        v.animate().alpha(1f).setDuration(220).start();
     }
 
-    TextView title(String t) { return title(t, true); }
+    void openPanel(View p) {
+        refreshAll();
+        show(p);
+    }
 
-    /** Crée un panneau (carte) repliable ; le contenu s'ajoute avec add(). */
-    TextView title(String t, boolean open) {
-        sectionNo++;
+    void goHome() {
+        refreshAll();
+        show(home);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if (currentView != null && currentView != home) goHome();
+        else super.onBackPressed();
+    }
+
+    Button backBtn() {
+        return btnC("←  Retour à l'accueil", BACK, BACK, GREEN, v -> goHome());
+    }
+
+    /** Crée un panneau : bouton retour, titre, puis une carte où ajouter le contenu avec add(). */
+    LinearLayout newPanel(String titre) {
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.VERTICAL);
+        p.addView(backBtn());
+        TextView t = new TextView(this);
+        t.setText(titre);
+        t.setTextSize(24);
+        t.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD));
+        t.setTextColor(TXT);
+        t.setPadding(dp(4), dp(18), 0, dp(6));
+        p.addView(t);
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setBackground(round(CARD, 18));
-        card.setPadding(dp(14), dp(6), dp(14), dp(12));
+        card.setPadding(dp(14), dp(10), dp(14), dp(14));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = dp(14);
-        card.setLayoutParams(lp);
-        TextView tv = new TextView(this);
-        tv.setTag(t);
-        tv.setText((open ? "▾  " : "▸  ") + t);
-        tv.setTextSize(17);
-        tv.setTextColor(GREEN);
-        tv.setTypeface(Typeface.DEFAULT_BOLD);
-        tv.setPadding(0, dp(10), 0, dp(10));
-        final LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setVisibility(open ? View.VISIBLE : View.GONE);
-        tv.setOnClickListener(v -> setOpen(tv, body, body.getVisibility() != View.VISIBLE, true));
-        card.addView(tv);
-        card.addView(body);
-        root.addView(card);
-        card.setAlpha(0f);
-        card.setTranslationY(dp(30));
-        card.animate().alpha(1f).translationY(0).setStartDelay(sectionNo * 90L).setDuration(450).start();
-        cur = body;
-        return tv;
+        lp.topMargin = dp(8);
+        p.addView(card, lp);
+        cur = card;
+        return p;
+    }
+
+    void endPanel(LinearLayout p) {
+        p.addView(backBtn());
+    }
+
+    /** Gros bouton de l'accueil : ouvre un panneau. Renvoie le petit compteur à droite. */
+    TextView menu(String emoji, String titre, String sous, final View target) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackground(round(CARD, 18));
+        row.setPadding(dp(14), dp(14), dp(14), dp(14));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(10);
+        row.setLayoutParams(lp);
+        TextView em = new TextView(this);
+        em.setText(emoji);
+        em.setTextSize(26);
+        em.setGravity(Gravity.CENTER);
+        row.addView(em, new LinearLayout.LayoutParams(dp(46), -2));
+        LinearLayout mid = new LinearLayout(this);
+        mid.setOrientation(LinearLayout.VERTICAL);
+        mid.addView(ligneTxt(titre, 17, TXT, true));
+        mid.addView(ligneTxt(sous, 12, MUTED, false));
+        row.addView(mid, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView badge = new TextView(this);
+        badge.setTextSize(17);
+        badge.setTypeface(Typeface.DEFAULT_BOLD);
+        badge.setTextColor(GREEN);
+        badge.setPadding(dp(8), 0, dp(4), 0);
+        row.addView(badge);
+        TextView arrow = new TextView(this);
+        arrow.setText("›");
+        arrow.setTextSize(26);
+        arrow.setTextColor(MUTED);
+        row.addView(arrow);
+        row.setOnClickListener(v -> v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(80)
+                .withEndAction(() -> {
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(120).start();
+                    openPanel(target);
+                }).start());
+        home.addView(row);
+        return badge;
     }
 
     /** Petit bloc chiffre + libellé du tableau de bord. */
@@ -172,6 +225,7 @@ public class MainActivity extends Activity {
         return v;
     }
 
+    /** Met à jour le tableau de bord et les compteurs de l'accueil. */
     void refreshDashboard() {
         if (vGroups == null) return;
         vGroups.setText(String.valueOf(selected.size()));
@@ -184,6 +238,23 @@ public class MainActivity extends Activity {
         }
         vWaiting.setText(String.valueOf(waiting));
         vNext.setText(next == Long.MAX_VALUE ? "—" : fFull.format(new Date(next)));
+        bdAlert.setText(waiting > 0 ? String.valueOf(waiting) : "");
+        bdGroups.setText(String.valueOf(Store.loadConfirmed(this).size()));
+        int nOk = Store.historyCount(this, 1), nFail = Store.historyCount(this, 2);
+        bdOk.setText(nOk > 0 ? String.valueOf(nOk) : "");
+        bdFail.setText(nFail > 0 ? String.valueOf(nFail) : "");
+        bdFail.setTextColor(RED);
+        bdHist.setText(nOk + nFail > 0 ? String.valueOf(nOk + nFail) : "");
+        bdSet.setText(permOk ? "✔" : "⚠");
+        bdSet.setTextColor(permOk ? GREEN : GOLD);
+    }
+
+    void refreshAll() {
+        refreshStatus();
+        refreshGroups();
+        refreshList();
+        refreshHistory();
+        refreshDashboard();
     }
 
     Button btn(String t, View.OnClickListener l) {
@@ -310,31 +381,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    void surveillerRecherche() {
-        scanBar.setVisibility(View.VISIBLE);
-        scanPct.setVisibility(View.VISIBLE);
-        lastScanStatus = Store.scanStatus(this);
-        final int[] v = {0};
-        final long t0 = System.currentTimeMillis();
-        ui.post(new Runnable() {
-            public void run() {
-                String st = Store.scanStatus(MainActivity.this);
-                if (!st.equals(lastScanStatus) || v[0] >= 100 || System.currentTimeMillis() - t0 > 120000) {
-                    scanBar.setProgress(100);
-                    scanPct.setText("✔ Recherche terminée");
-                    refreshGroups();
-                    refreshStatus();
-                    ui.postDelayed(() -> { scanBar.setVisibility(View.GONE); scanPct.setVisibility(View.GONE); }, 1500);
-                    return;
-                }
-                v[0] = Math.min(95, v[0] + 1 + (95 - v[0]) / 15);
-                scanBar.setProgress(v[0]);
-                scanPct.setText("Lecture de la liste… " + v[0] + " %");
-                ui.postDelayed(this, 400);
-            }
-        });
-    }
-
     EditText num(String hint, String def) {
         EditText e = new EditText(this);
         e.setHint(hint);
@@ -355,19 +401,49 @@ public class MainActivity extends Activity {
         cal.set(Calendar.SECOND, 0);
         cal.set(Calendar.MILLISECOND, 0);
 
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(8), dp(16), dp(32));
-        ScrollView sv = new ScrollView(this);
-        sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        sv.addView(root);
-        setContentView(sv);
-        // Fond fixe : dégradé vert sombre (reste en place quand on fait défiler, aucun flash blanc)
+        holder = new LinearLayout(this);
+        holder.setOrientation(LinearLayout.VERTICAL);
+        holder.setPadding(dp(16), dp(8), dp(16), dp(32));
+        scroll = new ScrollView(this);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroll.setFillViewport(false);
+        scroll.addView(holder);
+        setContentView(scroll);
+        // Fond fixe : dégradé vert sombre
         GradientDrawable fond = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{Color.parseColor("#0A1A13"), Color.parseColor("#0F2B21"), Color.parseColor("#08130E")});
         getWindow().setBackgroundDrawable(fond);
         getWindow().setStatusBarColor(Color.parseColor("#0A1A13"));
         getWindow().setNavigationBarColor(Color.parseColor("#08130E"));
+
+        buildPlanPanel();
+        buildHistoryPanels();
+        buildGroupsPanel();
+        buildAlertPanel();
+        buildSettingsPanel();
+        buildHome();
+
+        for (EditText e : new EditText[]{filter, lien, manual, message, etCount, etInterval, etHours, etDays, etPin}) styled(e);
+        for (TextView t : new TextView[]{status, selCount}) txt(t);
+        rbInterval.setTextColor(TXT);
+        rbFixed.setTextColor(TXT);
+        rbInterval.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        rbFixed.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        updateMode();
+        refreshButtons();
+        show(home);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshAll();
+    }
+
+    // ================= ACCUEIL =================
+    void buildHome() {
+        home = new LinearLayout(this);
+        home.setOrientation(LinearLayout.VERTICAL);
         TextView logo = new TextView(this);
         logo.setText("Planning\nSossou Constant");
         logo.setTextSize(30);
@@ -375,16 +451,13 @@ public class MainActivity extends Activity {
         logo.setTextColor(TXT);
         logo.setGravity(Gravity.CENTER);
         logo.setPadding(0, dp(24), 0, dp(4));
-        root.addView(logo);
+        home.addView(logo);
         TextView sub = new TextView(this);
-        sub.setText("Choisir • Planifier • Recevoir le récap sur WhatsApp");
+        sub.setText("Choisir • Planifier • Suivre les envois");
         sub.setTextColor(GOLD);
         sub.setGravity(Gravity.CENTER);
-        root.addView(sub);
-        logo.setScaleX(0.7f); logo.setScaleY(0.7f); logo.setAlpha(0f);
-        logo.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(600).start();
+        home.addView(sub);
 
-        // ---------- Tableau de bord ----------
         LinearLayout dash = new LinearLayout(this);
         dash.setOrientation(LinearLayout.HORIZONTAL);
         dash.setBackground(round(CARD, 18));
@@ -392,109 +465,28 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(-1, -2);
         dl.topMargin = dp(16);
         dash.setLayoutParams(dl);
-        vGroups = tile(dash, "Groupes choisis");
+        vGroups = tile(dash, "Groupes cochés");
         vWaiting = tile(dash, "Envois en attente");
         vNext = tile(dash, "Prochain envoi");
         vNext.setTextSize(15);
         vNext.setTextColor(GOLD);
-        root.addView(dash);
+        home.addView(dash);
 
-        // ---------- 1. Autorisations ----------
-        permTitle = title("1. Autorisations (une seule fois)");
-        permBody = cur;
-        status = new TextView(this);
-        status.setTextSize(15);
-        add(status);
-        add(btn("Autoriser l'accès à WhatsApp (accessibilité)", v ->
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));
-        add(btn("Autoriser les alarmes exactes", v -> openExactSettings()));
-        add(btn("Désactiver l'optimisation batterie", v -> {
-            try {
-                startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        Uri.parse("package:" + getPackageName())));
-            } catch (Exception e) {
-                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-            }
-        }));
+        menu("📅", "Planifier un envoi", "Quand, groupes cochés et message", pPlan);
+        bdAlert = menu("⏰", "Alertes en attente", "Les envois prévus, à lire ou supprimer", pAlert);
+        bdHist = menu("📖", "Historique", "Tous les envois, du plus récent au plus ancien", pHist);
+        bdOk = menu("✔", "Envois validés", "Les envois réussis", pOk);
+        bdFail = menu("✘", "Échecs", "Les envois qui n'ont pas marché", pFail);
+        bdGroups = menu("🔗", "Groupes et liens", "Ajouter un lien, voir le nom du groupe", pGroups);
+        bdSet = menu("⚙", "Réglages", "Autorisations et récapitulatif WhatsApp", pSet);
+    }
 
-        // ---------- 2. Groupes ----------
-        title(("2. Choisir les groupes"));
-        if (Store.installed(this).size() > 1) {
-            TextView lab = new TextView(this);
-            lab.setText("Deux WhatsApp détectés : lequel utiliser ?");
-            lab.setTextColor(GOLD);
-            lab.setTypeface(Typeface.DEFAULT_BOLD);
-            add(lab);
-            RadioGroup rgw = new RadioGroup(this);
-            final RadioButton rw1 = new RadioButton(this), rw2 = new RadioButton(this);
-            rw1.setId(View.generateViewId());
-            rw2.setId(View.generateViewId());
-            rw1.setText("WhatsApp");
-            rw2.setText("WhatsApp Business");
-            for (RadioButton r : new RadioButton[]{rw1, rw2}) {
-                r.setTextColor(TXT);
-                r.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
-                rgw.addView(r);
-            }
-            (Store.waPkg(this).equals("com.whatsapp.w4b") ? rw2 : rw1).setChecked(true);
-            rgw.setOnCheckedChangeListener((g, id) -> {
-                Store.setWaPkg(this, id == rw2.getId() ? "com.whatsapp.w4b" : "com.whatsapp");
-                selected.clear();
-                refreshGroups();
-                cand.clear();
-                toast("WhatsApp changé : ajoute tes groupes avec leur lien.");
-            });
-            add(rgw);
-        }
-        // Plus de recherche : les groupes s'ajoutent avec leur lien (voir plus bas).
-        scanBar = bar();
-        scanPct = pct();
-        scanStatus = new TextView(this);
+    // ================= PANNEAU : PLANIFIER =================
+    void buildPlanPanel() {
+        pPlan = newPanel("📅 Planifier un envoi");
 
-        filter = new EditText(this);
-        filter.setHint("Filtrer la liste…");
-        filter.setSingleLine(true);
-        filter.addTextChangedListener(new TextWatcher() {
-            public void beforeTextChanged(CharSequence s, int a, int b2, int c) {
-            }
-
-            public void onTextChanged(CharSequence s, int a, int b2, int c) {
-            }
-
-            public void afterTextChanged(Editable s) {
-                refreshGroups();
-            }
-        });
-        add(filter);
-        selCount = new TextView(this);
-        selCount.setPadding(0, dp(4), 0, dp(4));
-        add(selCount);
-        groupsBox = new LinearLayout(this);
-        groupsBox.setOrientation(LinearLayout.VERTICAL);
-        add(groupsBox);
-
-        TextView aideLien = new TextView(this);
-        aideLien.setText("Ajouter un groupe : colle son lien d'invitation (WhatsApp > infos du groupe > "
-                + "Inviter via un lien). L'appli retrouve le nom exact toute seule.");
-        aideLien.setTextColor(MUTED);
-        aideLien.setPadding(0, dp(10), 0, dp(4));
-        add(aideLien);
-        lien = new EditText(this);
-        lien.setHint("https://chat.whatsapp.com/…");
-        lien.setSingleLine(true);
-        add(lien);
-        manual = new EditText(this);
-        manual.setHint("Nom du groupe (seulement si le nom n'est pas trouvé tout seul)");
-        manual.setSingleLine(true);
-        add(manual);
-        lienStatus = new TextView(this);
-        lienStatus.setTextColor(MUTED);
-        add(lienStatus);
-        btnLien = btn("🔗 Ajouter le groupe avec son lien", v -> ajouterParLien());
-        add(btnLien);
-
-        // ---------- 3. Horaires ----------
-        title(("3. Quand envoyer ?"));
+        // --- Quand envoyer ---
+        add(sousTitre("1. Quand envoyer ?"));
         RadioGroup rg = new RadioGroup(this);
         rbInterval = new RadioButton(this);
         rbInterval.setId(View.generateViewId());
@@ -542,8 +534,32 @@ public class MainActivity extends Activity {
         fixedBox.addView(etDays);
         add(fixedBox);
 
-        // ---------- 4. Message ----------
-        title("4. Message et envoi");
+        // --- Groupes cochés ---
+        add(sousTitre("2. Groupes à cocher"));
+        filter = new EditText(this);
+        filter.setHint("Filtrer la liste…");
+        filter.setSingleLine(true);
+        filter.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b2, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b2, int c) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                refreshGroups();
+            }
+        });
+        add(filter);
+        selCount = new TextView(this);
+        selCount.setPadding(0, dp(4), 0, dp(4));
+        add(selCount);
+        groupsBox = new LinearLayout(this);
+        groupsBox.setOrientation(LinearLayout.VERTICAL);
+        add(groupsBox);
+
+        // --- Message ---
+        add(sousTitre("3. Message à envoyer"));
         message = new EditText(this);
         message.setHint("Écris ton message ici");
         message.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -553,54 +569,178 @@ public class MainActivity extends Activity {
         add(message);
 
         add(btn("📅 Planifier", v -> planifier()));
-        planBar = bar(); add(planBar); planPct = pct(); add(planPct);
+        planBar = bar();
+        add(planBar);
+        planPct = pct();
+        add(planPct);
         add(btn("Tester maintenant (envoi immédiat)", v -> tester()));
+        endPanel(pPlan);
+    }
 
-        // ---------- 5. Envois planifiés ----------
-        title("5. Envois planifiés");
-        list = new LinearLayout(this);
-        list.setOrientation(LinearLayout.VERTICAL);
-        add(list);
+    // ================= PANNEAUX : HISTORIQUE / VALIDÉS / ÉCHECS =================
+    void buildHistoryPanels() {
+        pHist = newPanel("📖 Historique");
+        histBox = new LinearLayout(this);
+        histBox.setOrientation(LinearLayout.VERTICAL);
+        add(histBox);
+        add(btnC("Effacer l'historique", RED, RED2, Color.WHITE, v -> {
+            Store.clearHistory(this);
+            refreshHistory();
+            refreshDashboard();
+        }));
+        endPanel(pHist);
 
-        // ---------- 6. Récapitulatif ----------
-        title("6. Récapitulatif sur mon WhatsApp");
+        pOk = newPanel("✔ Envois validés");
+        okBox = new LinearLayout(this);
+        okBox.setOrientation(LinearLayout.VERTICAL);
+        add(okBox);
+        endPanel(pOk);
+
+        pFail = newPanel("✘ Échecs");
+        failBox = new LinearLayout(this);
+        failBox.setOrientation(LinearLayout.VERTICAL);
+        add(failBox);
+        endPanel(pFail);
+    }
+
+    // ================= PANNEAU : GROUPES ET LIENS =================
+    void buildGroupsPanel() {
+        pGroups = newPanel("🔗 Groupes et liens");
+        if (Store.installed(this).size() > 1) {
+            TextView lab = new TextView(this);
+            lab.setText("Deux WhatsApp détectés : lequel utiliser ?");
+            lab.setTextColor(GOLD);
+            lab.setTypeface(Typeface.DEFAULT_BOLD);
+            add(lab);
+            RadioGroup rgw = new RadioGroup(this);
+            final RadioButton rw1 = new RadioButton(this), rw2 = new RadioButton(this);
+            rw1.setId(View.generateViewId());
+            rw2.setId(View.generateViewId());
+            rw1.setText("WhatsApp");
+            rw2.setText("WhatsApp Business");
+            for (RadioButton r : new RadioButton[]{rw1, rw2}) {
+                r.setTextColor(TXT);
+                r.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+                rgw.addView(r);
+            }
+            (Store.waPkg(this).equals("com.whatsapp.w4b") ? rw2 : rw1).setChecked(true);
+            rgw.setOnCheckedChangeListener((g, id) -> {
+                Store.setWaPkg(this, id == rw2.getId() ? "com.whatsapp.w4b" : "com.whatsapp");
+                selected.clear();
+                refreshGroups();
+                toast("WhatsApp changé : ajoute tes groupes avec leur lien.");
+            });
+            add(rgw);
+        }
+
+        TextView aideLien = new TextView(this);
+        aideLien.setText("Ajouter un groupe : colle son lien d'invitation (WhatsApp > infos du groupe > "
+                + "Inviter via un lien). L'appli retrouve le nom exact toute seule.");
+        aideLien.setTextColor(MUTED);
+        aideLien.setPadding(0, dp(4), 0, dp(4));
+        add(aideLien);
+        lien = new EditText(this);
+        lien.setHint("https://chat.whatsapp.com/…");
+        lien.setSingleLine(true);
+        add(lien);
+        manual = new EditText(this);
+        manual.setHint("Nom du groupe (seulement si le nom n'est pas trouvé tout seul)");
+        manual.setSingleLine(true);
+        add(manual);
+        lienStatus = new TextView(this);
+        lienStatus.setTextColor(MUTED);
+        add(lienStatus);
+        btnLien = btn("🔗 Ajouter le groupe avec son lien", v -> ajouterParLien());
+        add(btnLien);
+
+        manageBox = new LinearLayout(this);
+        manageBox.setOrientation(LinearLayout.VERTICAL);
+        add(manageBox);
+        endPanel(pGroups);
+    }
+
+    // ================= PANNEAU : ALERTES EN ATTENTE =================
+    void buildAlertPanel() {
+        pAlert = newPanel("⏰ Alertes en attente");
+        alertBox = new LinearLayout(this);
+        alertBox.setOrientation(LinearLayout.VERTICAL);
+        add(alertBox);
+        endPanel(pAlert);
+    }
+
+    // ================= PANNEAU : RÉGLAGES =================
+    void buildSettingsPanel() {
+        pSet = newPanel("⚙ Réglages");
+        add(sousTitre("Autorisations (une seule fois)"));
+        status = new TextView(this);
+        status.setTextSize(15);
+        add(status);
+        add(btn("Autoriser l'accès à WhatsApp (accessibilité)", v ->
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));
+        add(btn("Autoriser les alarmes exactes", v -> openExactSettings()));
+        add(btn("Désactiver l'optimisation batterie", v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            }
+        }));
+
+        add(sousTitre("Déverrouillage automatique"));
+        TextView aideCode = new TextView(this);
+        aideCode.setText("Si le téléphone est verrouillé à l'heure de l'envoi, l'appli saisit ton code PIN, envoie "
+                + "le message, puis reverrouille. L'empreinte digitale ne peut pas être utilisée par une appli : "
+                + "seul le code PIN (chiffres) est possible. Le code reste chiffré sur ce téléphone.");
+        aideCode.setTextColor(MUTED);
+        aideCode.setPadding(0, 0, 0, dp(6));
+        add(aideCode);
+        cbUnlock = new CheckBox(this);
+        cbUnlock.setText("Déverrouiller le téléphone tout seul");
+        cbUnlock.setTextColor(TXT);
+        cbUnlock.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        cbUnlock.setChecked(Vault.enabled(this));
+        cbUnlock.setOnCheckedChangeListener((v, on) -> {
+            if (on && !Vault.hasPin(this)) {
+                toast("Enregistre d'abord ton code PIN ci-dessous.");
+                v.setChecked(false);
+                return;
+            }
+            Vault.setEnabled(this, on);
+            refreshStatus();
+            refreshDashboard();
+        });
+        add(cbUnlock);
+        cbRelock = new CheckBox(this);
+        cbRelock.setText("Reverrouiller le téléphone après l'envoi");
+        cbRelock.setTextColor(TXT);
+        cbRelock.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
+        cbRelock.setChecked(Vault.relock(this));
+        cbRelock.setOnCheckedChangeListener((v, on) -> Vault.setRelock(this, on));
+        add(cbRelock);
+        etPin = new EditText(this);
+        etPin.setHint("Code PIN du téléphone (chiffres seulement)");
+        etPin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        add(etPin);
+        pinStatus = new TextView(this);
+        pinStatus.setTextColor(MUTED);
+        add(pinStatus);
+        add(btn("Enregistrer le code", v -> enregistrerCode()));
+        add(btnC("Effacer le code", RED, RED2, Color.WHITE, v -> {
+            Vault.clearPin(this);
+            cbUnlock.setChecked(false);
+            refreshStatus();
+            refreshDashboard();
+        }));
+
+        add(sousTitre("Récapitulatif sur mon WhatsApp"));
         phone = styled(new EditText(this));
         phone.setHint("Ton numéro avec indicatif, ex : 22901234567");
         phone.setInputType(InputType.TYPE_CLASS_PHONE);
         phone.setText(prefs().getString("phone", ""));
         add(phone);
         add(btn("💬 Envoyer le récapitulatif sur mon WhatsApp", v -> envoyerRecap()));
-
-        // ---------- 7. Historique ----------
-        title("7. Historique des envois", false);
-        histBox = new LinearLayout(this);
-        histBox.setOrientation(LinearLayout.VERTICAL);
-        add(histBox);
-        add(btn("Effacer l'historique", v -> {
-            Store.clearHistory(this);
-            refreshHistory();
-        }));
-
-        for (EditText e : new EditText[]{filter, lien, manual, message, etCount, etInterval, etHours, etDays}) styled(e);
-        for (TextView t : new TextView[]{status, scanStatus, selCount}) txt(t);
-        rbInterval.setTextColor(TXT); rbFixed.setTextColor(TXT);
-        rbInterval.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
-        rbFixed.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
-        updateMode();
-        refreshButtons();
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        refreshStatus();
-        refreshGroups();
-        refreshList();
-        refreshHistory();
-        if (!permChecked) {
-            permChecked = true;
-            if (permOk) setOpen(permTitle, permBody, false, false); // tout est prêt : on replie
-        }
+        endPanel(pSet);
     }
 
     void updateMode() {
@@ -633,13 +773,17 @@ public class MainActivity extends Activity {
         ligne(sb, acc ? 0 : 2, "Accès à WhatsApp (accessibilité)");
         ligne(sb, alarm ? 0 : 2, "Alarmes exactes");
         ligne(sb, bat ? 0 : 2, "Batterie non restreinte");
-        ligne(sb, secure ? 1 : 0, secure
-                ? "Code/empreinte à l'écran de verrouillage : l'envoi automatique peut échouer"
-                : "Pas de code à l'écran de verrouillage");
+        boolean autoUnlock = Vault.enabled(this) && Vault.hasPin(this);
+        ligne(sb, secure && !autoUnlock ? 1 : 0, !secure ? "Pas de code à l'écran de verrouillage"
+                : autoUnlock ? "Déverrouillage automatique prêt (code enregistré)"
+                : "Code/empreinte à l'écran de verrouillage : enregistre ton code ci-dessous pour l'envoi automatique");
         sb.delete(sb.length() - 1, sb.length());
         status.setText(sb);
-        permOk = acc && alarm && bat && !secure;
-        scanStatus.setText(Store.scanStatus(this));
+        if (pinStatus != null) {
+            pinStatus.setText(Vault.hasPin(this) ? "✔ Code enregistré (chiffré)" : "Aucun code enregistré");
+            if (cbUnlock != null && cbUnlock.isChecked() != Vault.enabled(this)) cbUnlock.setChecked(Vault.enabled(this));
+        }
+        permOk = acc && alarm && bat && (!secure || autoUnlock);
     }
 
     TextView sousTitre(String t) {
@@ -651,40 +795,67 @@ public class MainActivity extends Activity {
         return v;
     }
 
+    // ================= RAFRAÎCHISSEMENT DES PANNEAUX =================
     void refreshGroups() {
+        if (groupsBox == null || manageBox == null) return;
         groupsBox.removeAllViews();
+        manageBox.removeAllViews();
         String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
         List<String> mine = Store.loadConfirmed(this);
         selected.retainAll(mine);
 
-        // --- Mes groupes : seuls ceux-là servent à envoyer ---
-        groupsBox.addView(sousTitre("Mes groupes (" + mine.size() + ")"));
+        // --- Panneau Planifier : seulement les cases à cocher ---
         if (mine.isEmpty()) {
             TextView t = new TextView(this);
             t.setTextColor(MUTED);
-            t.setText("Aucun groupe : colle le lien d'un groupe ci-dessous pour l'ajouter.");
+            t.setText("Aucun groupe pour l'instant. Ajoute-en dans « Groupes et liens ».");
             groupsBox.addView(t);
+            groupsBox.addView(btnC("🔗 Ajouter un groupe", BACK, BACK, GREEN, v -> openPanel(pGroups)));
         }
         for (final String g : mine) {
             if (!f.isEmpty() && !g.toLowerCase(Locale.ROOT).contains(f)) continue;
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
             CheckBox cb = new CheckBox(this);
-            cb.setText(g + (Store.linkOf(this, g) != null ? "  🔗" : "  (sans lien)"));
+            cb.setText(g);
             cb.setChecked(selected.contains(g));
             cb.setTextColor(TXT);
             cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
             cb.setOnCheckedChangeListener((v, on) -> {
                 if (on) selected.add(g); else selected.remove(g);
-                selCount.setText(selected.size() + " groupe(s) sélectionné(s) pour l'envoi");
+                selCount.setText(selected.size() + " groupe(s) coché(s) pour l'envoi");
                 refreshDashboard();
             });
-            row.addView(cb, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            groupsBox.addView(cb);
+        }
+        selCount.setText(selected.size() + " groupe(s) coché(s) pour l'envoi");
+
+        // --- Panneau Groupes et liens : liste avec suppression ---
+        manageBox.addView(sousTitre("Mes groupes (" + mine.size() + ")"));
+        if (mine.isEmpty()) {
+            TextView t = new TextView(this);
+            t.setTextColor(MUTED);
+            t.setText("Aucun groupe : colle le lien d'un groupe ci-dessus pour l'ajouter.");
+            manageBox.addView(t);
+        }
+        for (final String g : mine) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setBackground(round(BG, 12));
+            row.setPadding(dp(12), dp(6), dp(4), dp(6));
+            LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(-1, -2);
+            rl.topMargin = dp(6);
+            row.setLayoutParams(rl);
+            LinearLayout info = new LinearLayout(this);
+            info.setOrientation(LinearLayout.VERTICAL);
+            info.addView(ligneTxt(g, 15, TXT, true));
+            boolean aLien = Store.linkOf(this, g) != null;
+            info.addView(ligneTxt(aLien ? "🔗 lien enregistré" : "sans lien (envoi par recherche du nom)", 12,
+                    aLien ? MUTED : GOLD, false));
+            row.addView(info, new LinearLayout.LayoutParams(0, -2, 1f));
             TextView x = new TextView(this);
             x.setText("✕");
             x.setTextColor(RED);
-            x.setTextSize(18);
+            x.setTextSize(20);
             x.setPadding(dp(14), dp(8), dp(14), dp(8));
             x.setOnClickListener(v -> {
                 Store.removeConfirmed(this, g);
@@ -692,10 +863,104 @@ public class MainActivity extends Activity {
                 refreshGroups();
             });
             row.addView(x);
-            groupsBox.addView(row);
+            manageBox.addView(row);
         }
-        selCount.setText(selected.size() + " groupe(s) sélectionné(s) pour l'envoi");
         refreshDashboard();
+    }
+
+    /** Alertes en attente : les envois planifiés qui n'ont pas encore fini. */
+    void refreshList() {
+        if (alertBox == null) return;
+        alertBox.removeAllViews();
+        int waiting = 0, finished = 0;
+        for (final Store.Plan p : Store.load(this)) {
+            boolean enCours = !p.done && p.idx < p.times.size();
+            if (!enCours) {
+                finished++;
+                continue;
+            }
+            waiting++;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setBackground(round(BG, 14));
+            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(-1, -2);
+            rl.topMargin = dp(8);
+            row.setLayoutParams(rl);
+
+            row.addView(ligneTxt("⏰ EN ATTENTE", 12, GOLD, true));
+            row.addView(ligneTxt("Prochain : " + fFull.format(new Date(p.times.get(p.idx)))
+                    + "  (" + (p.idx + 1) + "/" + p.times.size() + ")", 16, TXT, true));
+            if (p.times.size() - p.idx > 1) {
+                StringBuilder up = new StringBuilder("Ensuite : ");
+                int shown = 0;
+                for (int k = p.idx + 1; k < p.times.size() && shown < 5; k++, shown++) {
+                    if (shown > 0) up.append(" • ");
+                    up.append(fFull.format(new Date(p.times.get(k))));
+                }
+                int rest = p.times.size() - p.idx - 1 - shown;
+                if (rest > 0) up.append(" … (+").append(rest).append(")");
+                row.addView(ligneTxt(up.toString(), 12, MUTED, false));
+            }
+            row.addView(ligneTxt("Groupes : " + join(p.groups), 13, MUTED, false));
+            String msg = p.message.replace('\n', ' ');
+            if (msg.length() > 80) msg = msg.substring(0, 80) + "…";
+            row.addView(ligneTxt("« " + msg + " »", 14, TXT, false));
+            if (p.last != null && !p.last.isEmpty()) {
+                char c = p.last.charAt(0);
+                int col = c == '✔' ? GREEN : c == '✘' ? RED : c == '⚠' ? GOLD : MUTED;
+                row.addView(ligneTxt(p.last, 13, col, false));
+            }
+            row.addView(btnC("Supprimer cette alerte", RED, RED2, Color.WHITE, v -> {
+                Scheduler.cancel(this, p.id);
+                Store.remove(this, p.id);
+                refreshList();
+            }));
+            alertBox.addView(row);
+        }
+        if (waiting == 0) {
+            alertBox.addView(ligneTxt("Aucune alerte en attente.", 14, MUTED, false));
+        }
+        if (finished > 0) {
+            final int n = finished;
+            alertBox.addView(btnC("Effacer les " + n + " planification(s) terminée(s)", BACK, BACK, GREEN, v -> {
+                for (Store.Plan q : Store.load(this)) {
+                    if (q.done || q.idx >= q.times.size()) {
+                        Scheduler.cancel(this, q.id);
+                        Store.remove(this, q.id);
+                    }
+                }
+                refreshList();
+            }));
+        }
+        refreshDashboard();
+    }
+
+    void refreshHistory() {
+        fillHistory(histBox, 0, "Aucun envoi pour l'instant.");
+        fillHistory(okBox, 1, "Aucun envoi validé pour l'instant.");
+        fillHistory(failBox, 2, "Aucun échec. 👍");
+    }
+
+    /** mode : 0 = tout, 1 = validés, 2 = échecs. */
+    void fillHistory(LinearLayout box, int mode, String vide) {
+        if (box == null) return;
+        box.removeAllViews();
+        List<String> h = Store.historyLines(this, 100, mode);
+        if (h.isEmpty()) {
+            box.addView(ligneTxt(vide, 14, MUTED, false));
+            return;
+        }
+        box.addView(ligneTxt(h.size() + " envoi(s) — du plus récent au plus ancien", 12, GOLD, false));
+        for (String l : h) {
+            TextView t = ligneTxt(l, 13, l.startsWith("✔") ? TXT : RED, false);
+            t.setBackground(round(BG, 12));
+            t.setPadding(dp(12), dp(8), dp(12), dp(8));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+            lp.topMargin = dp(6);
+            t.setLayoutParams(lp);
+            box.addView(t);
+        }
     }
 
     /** Ajoute un groupe à partir de son lien d'invitation : retrouve son nom exact sur la page du lien. */
@@ -771,18 +1036,22 @@ public class MainActivity extends Activity {
         }
     }
 
-    void lancerRecherche() {
-        WaService s = WaService.instance;
-        if (s == null) {
-            toast("Autorise d'abord l'accès à WhatsApp (accessibilité).");
+    void enregistrerCode() {
+        String code = etPin.getText().toString().trim();
+        if (!code.matches("\\d{4,16}")) {
+            toast("Le code doit contenir de 4 à 16 chiffres.");
             return;
         }
-        if (!s.startScan()) {
-            toast("Une opération est déjà en cours, réessaie dans un instant.");
+        if (!Vault.savePin(this, code)) {
+            toast("Impossible d'enregistrer le code sur ce téléphone.");
             return;
         }
-        surveillerRecherche();
-        toast("Recherche en cours : ne touche pas à l'écran, tu reviens ici automatiquement.");
+        etPin.setText("");
+        Vault.setEnabled(this, true);
+        cbUnlock.setChecked(true);
+        toast("Code enregistré. Teste avec « Tester maintenant » en verrouillant l'écran.");
+        refreshStatus();
+        refreshDashboard();
     }
 
     void openExactSettings() {
@@ -932,62 +1201,6 @@ public class MainActivity extends Activity {
         for (String g : selected) WaService.instance.enqueue(new Job(0, g, m, null, Store.linkOf(this, g)));
     }
 
-    void refreshList() {
-        list.removeAllViews();
-        List<Store.Plan> plans = Store.load(this);
-        if (plans.isEmpty()) {
-            TextView t = new TextView(this);
-            t.setTextColor(MUTED);
-            t.setText("Aucun envoi planifié pour l'instant.");
-            list.addView(t);
-        }
-        for (final Store.Plan p : plans) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.VERTICAL);
-            row.setBackground(round(BG, 14));
-            row.setPadding(dp(12), dp(10), dp(12), dp(10));
-            LinearLayout.LayoutParams rl = new LinearLayout.LayoutParams(-1, -2);
-            rl.topMargin = dp(8);
-            row.setLayoutParams(rl);
-            row.setAlpha(0f);
-            row.animate().alpha(1f).setDuration(350).start();
-
-            row.addView(ligneTxt(p.done ? "✔ TERMINÉ" : "⏰ EN ATTENTE", 12, p.done ? MUTED : GOLD, true));
-            boolean enCours = !p.done && p.idx < p.times.size();
-            row.addView(ligneTxt(enCours
-                    ? "Prochain : " + fFull.format(new Date(p.times.get(p.idx)))
-                    + "  (" + (p.idx + 1) + "/" + p.times.size() + ")"
-                    : p.times.size() + " envoi(s) au total", 16, TXT, true));
-            row.addView(ligneTxt("Groupes : " + join(p.groups), 13, MUTED, false));
-            String msg = p.message.replace('\n', ' ');
-            if (msg.length() > 80) msg = msg.substring(0, 80) + "…";
-            row.addView(ligneTxt("« " + msg + " »", 14, TXT, false));
-            if (p.last != null && !p.last.isEmpty()) {
-                char c = p.last.charAt(0);
-                int col = c == '✔' ? GREEN : c == '✘' ? RED : c == '⚠' ? GOLD : MUTED;
-                row.addView(ligneTxt(p.last, 13, col, false));
-            }
-            row.addView(btnC("Supprimer", RED, RED2, Color.WHITE, v -> {
-                Scheduler.cancel(this, p.id);
-                Store.remove(this, p.id);
-                refreshList();
-            }));
-            list.addView(row);
-        }
-        refreshDashboard();
-    }
-
-    void refreshHistory() {
-        if (histBox == null) return;
-        histBox.removeAllViews();
-        List<String> h = Store.historyLines(this, 30);
-        if (h.isEmpty()) {
-            histBox.addView(ligneTxt("Aucun envoi pour l'instant.", 14, MUTED, false));
-            return;
-        }
-        for (String l : h) histBox.addView(ligneTxt(l, 13, l.startsWith("✔") ? TXT : RED, false));
-    }
-
     TextView ligneTxt(String s, int size, int color, boolean bold) {
         TextView t = new TextView(this);
         t.setText(s);
@@ -1007,3 +1220,4 @@ public class MainActivity extends Activity {
         return sb.toString();
     }
 }
+

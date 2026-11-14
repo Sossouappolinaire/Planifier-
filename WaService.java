@@ -1,6 +1,11 @@
 package bj.planificateur;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
+import android.app.KeyguardManager;
+import android.graphics.Path;
+import android.os.Build;
+import android.util.DisplayMetrics;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -299,6 +304,167 @@ public class WaService extends AccessibilityService {
     //  ENVOI DES MESSAGES
     // =====================================================================
 
+    // =====================================================================
+    //  DÉVERROUILLAGE AUTOMATIQUE (code PIN enregistré dans l'appli)
+    // =====================================================================
+
+    static final String[] ENTER = {"enter", "entrée", "entrer", "ok", "valider", "done", "confirm", "confirmer"};
+
+    boolean unlocking, unlockedByUs, enterClicked;
+    String pin;
+    int pinIdx;
+    long unlockStart, lastSwipe, pinDoneAt, noUnlockUntil;
+
+    final Runnable unlockPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (unlocking) unlockTick();
+        }
+    };
+
+    boolean isLocked() {
+        KeyguardManager km = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        return km != null && km.isKeyguardLocked();
+    }
+
+    void startUnlock() {
+        pin = Vault.getPin(this);
+        if (pin == null || pin.isEmpty()) {
+            Vault.setEnabled(this, false);
+            h.postDelayed(this::next, 100);
+            return;
+        }
+        unlocking = true;
+        enterClicked = false;
+        pinIdx = 0;
+        pinDoneAt = 0;
+        lastSwipe = 0;
+        unlockStart = System.currentTimeMillis();
+        holdWake();
+        h.removeCallbacks(unlockPoll);
+        h.postDelayed(unlockPoll, 600);
+    }
+
+    /** Fait échouer (avec réessai automatique) le premier envoi en attente. */
+    void failFirst(String msg) {
+        cur = queue.poll();
+        if (cur == null) {
+            relockIfNeeded();
+            return;
+        }
+        finish(false, msg);
+    }
+
+    void unlockTick() {
+        long now = System.currentTimeMillis();
+        if (!isLocked()) {
+            unlocking = false;
+            unlockedByUs = true;
+            pin = null;
+            h.postDelayed(this::next, 1500);
+            return;
+        }
+        if (pinDoneAt > 0 && now - pinDoneAt > 7000) {
+            // Code saisi en entier mais le téléphone reste verrouillé : on s'arrête pour ne pas bloquer le téléphone
+            unlocking = false;
+            pin = null;
+            noUnlockUntil = now + 600000;
+            Vault.setEnabled(this, false);
+            Notifier.show(this, "Déverrouillage automatique désactivé",
+                    "Le code enregistré semble refusé. Vérifie-le dans Réglages avant de réactiver.");
+            failFirst("déverrouillage refusé (code incorrect ?)");
+            return;
+        }
+        if (now - unlockStart > 30000) {
+            unlocking = false;
+            pin = null;
+            noUnlockUntil = now + 300000;
+            failFirst("déverrouillage automatique impossible (clavier du code introuvable)");
+            return;
+        }
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root != null) {
+            budget = MAX_NODES * 2;
+            if (pinIdx < pin.length()) {
+                AccessibilityNodeInfo key = findKey(root, pin.charAt(pinIdx));
+                if (key != null) {
+                    if (click(key)) {
+                        pinIdx++;
+                        if (pinIdx >= pin.length()) pinDoneAt = now;
+                    }
+                    h.postDelayed(unlockPoll, 350);
+                    return;
+                }
+            } else {
+                if (!enterClicked) {
+                    AccessibilityNodeInfo en = findEnter(root);
+                    if (en != null && click(en)) enterClicked = true;
+                }
+                h.postDelayed(unlockPoll, 800);
+                return;
+            }
+        }
+        // Clavier du code pas encore visible : on glisse vers le haut pour le faire apparaître
+        if (pinIdx == 0 && now - lastSwipe > 2500) {
+            lastSwipe = now;
+            swipeUp();
+        }
+        h.postDelayed(unlockPoll, 700);
+    }
+
+    AccessibilityNodeInfo findKey(AccessibilityNodeInfo n, char d) {
+        if (n == null || budget-- <= 0) return null;
+        String want = String.valueOf(d);
+        CharSequence tx = n.getText(), cd = n.getContentDescription();
+        if (n.getChildCount() == 0
+                && ((tx != null && want.equals(tx.toString().trim()))
+                || (cd != null && want.equals(cd.toString().trim())))) return n;
+        for (int i = 0; i < n.getChildCount(); i++) {
+            AccessibilityNodeInfo r = findKey(n.getChild(i), d);
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    AccessibilityNodeInfo findEnter(AccessibilityNodeInfo n) {
+        if (n == null || budget-- <= 0) return null;
+        String id = n.getViewIdResourceName();
+        CharSequence cd = n.getContentDescription(), tx = n.getText();
+        if (id != null && id.endsWith("key_enter")) return n;
+        for (String w : ENTER) {
+            if ((cd != null && w.equalsIgnoreCase(cd.toString().trim()))
+                    || (tx != null && n.getChildCount() == 0 && w.equalsIgnoreCase(tx.toString().trim()))) return n;
+        }
+        for (int i = 0; i < n.getChildCount(); i++) {
+            AccessibilityNodeInfo r = findEnter(n.getChild(i));
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    void swipeUp() {
+        try {
+            DisplayMetrics dm = getResources().getDisplayMetrics();
+            Path p = new Path();
+            p.moveTo(dm.widthPixels / 2f, dm.heightPixels * 0.85f);
+            p.lineTo(dm.widthPixels / 2f, dm.heightPixels * 0.25f);
+            GestureDescription.Builder b = new GestureDescription.Builder();
+            b.addStroke(new GestureDescription.StrokeDescription(p, 0, 300));
+            dispatchGesture(b.build(), null, null);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Si c'est l'appli qui a déverrouillé le téléphone, on le reverrouille quand tout est envoyé. */
+    void relockIfNeeded() {
+        if (!unlockedByUs) return;
+        unlockedByUs = false;
+        if (!Vault.relock(this) || Build.VERSION.SDK_INT < 28) return;
+        h.postDelayed(() -> {
+            if (queue.isEmpty() && cur == null && !unlocking) performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN);
+        }, 2500);
+    }
+
     public void enqueue(final Job j) {
         h.post(() -> {
             queue.add(j);
@@ -307,12 +473,24 @@ public class WaService extends AccessibilityService {
     }
 
     void next() {
-        if (scanning || cur != null) return;
-        cur = queue.poll();
-        if (cur == null) {
+        if (scanning || cur != null || unlocking) return;
+        if (queue.isEmpty()) {
             if (wl != null && wl.isHeld()) wl.release();
+            relockIfNeeded();
             return;
         }
+        if (isLocked()) {
+            if (System.currentTimeMillis() < noUnlockUntil) {
+                cur = queue.poll();
+                finish(false, "écran verrouillé : déverrouillage automatique impossible");
+                return;
+            }
+            if (Vault.enabled(this) && Vault.hasPin(this)) {
+                startUnlock();
+                return;
+            }
+        }
+        cur = queue.poll();
         holdWake();
         step = 0;
         typed = 0;
